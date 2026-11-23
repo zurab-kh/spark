@@ -15,9 +15,37 @@ export function shouldIntercept(item, now = Date.now()) {
   try { url = new URL(item.finalUrl || item.url); } catch { return false; }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
 
+  // .torrent files are tiny, but Spark downloads the torrent itself — always hand them over.
+  if (isTorrent(item)) return true;
+
   const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize > 0 ? item.fileSize : -1;
   if (size >= 0 && size < MIN_SIZE) return false;
   return true;
+}
+
+export const TORRENT_MIME = 'application/x-bittorrent';
+
+const endsWithTorrent = (s) => typeof s === 'string' && /\.torrent$/i.test(s.trim());
+
+function urlPath(raw) {
+  try { return decodeURIComponent(new URL(raw).pathname); } catch { return ''; }
+}
+
+// A .torrent download: by file name, by URL path, or by MIME type (download.php?id=… answering application/x-bittorrent).
+export function isTorrent(item) {
+  if (!item) return false;
+  if (typeof item.mime === 'string' && item.mime.toLowerCase().split(';')[0].trim() === TORRENT_MIME) return true;
+  return endsWithTorrent(baseName(item.filename)) || endsWithTorrent(urlPath(item.finalUrl)) || endsWithTorrent(urlPath(item.url));
+}
+
+// File name to send to Spark. Spark routes a link to its torrent engine when the URL or the name ends with
+// .torrent, so a torrent recognised only by its MIME type gets a .torrent name.
+export function fileNameFor(item) {
+  const name = baseName(item && item.filename);
+  if (!isTorrent(item) || endsWithTorrent(name)) return name;
+  const fromUrl = baseName(urlPath(item.finalUrl || item.url));
+  if (endsWithTorrent(fromUrl)) return fromUrl;
+  return (name || 'download') + '.torrent';
 }
 
 // item.filename is a full local path ("C:\Users\…\file.zip" on Windows) — keep only the file name.

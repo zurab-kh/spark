@@ -1,6 +1,6 @@
 // Spark: перехват загрузок браузера. Отменяем загрузку в браузере только после того,
 // как Spark подтвердил приём ссылки (ok:true); иначе браузер качает сам.
-import { shouldIntercept, baseName } from './filter.js';
+import { shouldIntercept, fileNameFor } from './filter.js';
 
 const HOST = 'com.spark.downloader';
 const ALT_WINDOW_MS = 3000;       // сколько после Alt+клика загрузка считается «браузерной»
@@ -49,7 +49,7 @@ chrome.downloads.onCreated.addListener(async (item) => {
       startTime: item.startTime,  // Spark double-checks that this is a new download, not browser history
       url: item.url,
       referer: item.referrer || null,
-      fileName: baseName(item.filename),
+      fileName: fileNameFor(item),  // .torrent detected by MIME type gets a .torrent name
       cookies: await cookieHeader(item.url),
     };
     if (altRecent()) return;   // Alt-клик мог дойти, пока собирали cookies

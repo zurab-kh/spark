@@ -1,7 +1,7 @@
 // Run: node --test tests/browser-extension
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldIntercept, baseName } from '../../browser-extension/filter.js';
+import { shouldIntercept, baseName, isTorrent, fileNameFor } from '../../browser-extension/filter.js';
 
 const now = Date.parse('2026-11-23T19:00:00Z');
 const fresh = (over = {}) => ({
@@ -44,4 +44,38 @@ test('baseName handles Windows and URL-style paths', () => {
   assert.equal(baseName('C:\\Users\\Zu\\Downloads\\Grok_Bot_0.44.0_Setup.exe'), 'Grok_Bot_0.44.0_Setup.exe');
   assert.equal(baseName('/home/u/file.iso'), 'file.iso');
   assert.equal(baseName(''), null);
+});
+
+test('.torrent downloads are intercepted regardless of size', () => {
+  const small = { totalBytes: 30 * 1024 };
+  assert.equal(shouldIntercept(fresh({ ...small, url: 'https://tracker.example/files/linux.torrent' }), now), true);
+  assert.equal(shouldIntercept(fresh({ ...small, url: 'https://t.example/dl.php?id=7', mime: 'application/x-bittorrent' }), now), true);
+  assert.equal(shouldIntercept(fresh({ ...small, url: 'https://t.example/dl.php?id=7', filename: 'C:\\Users\\u\\Downloads\\Movie.torrent' }), now), true);
+  assert.equal(shouldIntercept(fresh({ ...small, url: 'https://t.example/dl.php?id=7', finalUrl: 'https://cdn.example/x/Movie.TORRENT' }), now), true);
+  // Still a small ordinary file → browser.
+  assert.equal(shouldIntercept(fresh({ ...small, url: 'https://t.example/readme.txt' }), now), false);
+});
+
+test('.torrent rule keeps the freshness and protocol checks', () => {
+  const torrent = { url: 'https://t.example/a.torrent', totalBytes: 1000 };
+  assert.equal(shouldIntercept(fresh({ ...torrent, state: 'complete' }), now), false);
+  assert.equal(shouldIntercept(fresh({ ...torrent, startTime: '2026-10-01T10:00:00Z' }), now), false);
+  assert.equal(shouldIntercept(fresh({ url: 'data:application/x-bittorrent,xx', mime: 'application/x-bittorrent' }), now), false);
+});
+
+test('isTorrent', () => {
+  assert.equal(isTorrent({ url: 'https://a/b.torrent' }), true);
+  assert.equal(isTorrent({ url: 'https://a/b.torrent?x=1' }), true);
+  assert.equal(isTorrent({ url: 'https://a/b', mime: 'application/x-bittorrent; charset=binary' }), true);
+  assert.equal(isTorrent({ url: 'https://a/b.torrent.zip' }), false);
+  assert.equal(isTorrent({ url: 'https://a/b.zip', mime: 'application/zip' }), false);
+  assert.equal(isTorrent(null), false);
+});
+
+test('fileNameFor gives torrents found by MIME a .torrent name', () => {
+  assert.equal(fileNameFor({ url: 'https://a/big.zip', filename: 'C:\\d\\big.zip' }), 'big.zip');
+  assert.equal(fileNameFor({ url: 'https://a/x.torrent', filename: '' }), 'x.torrent');
+  assert.equal(fileNameFor({ url: 'https://a/dl.php?id=1', mime: 'application/x-bittorrent', filename: '' }), 'download.torrent');
+  assert.equal(fileNameFor({ url: 'https://a/dl.php?id=1', mime: 'application/x-bittorrent', filename: 'C:\\d\\Movie.torrent' }), 'Movie.torrent');
+  assert.equal(fileNameFor({ url: 'https://a/', mime: 'application/x-bittorrent' }), 'download.torrent');
 });
