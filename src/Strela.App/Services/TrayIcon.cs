@@ -19,12 +19,21 @@ public sealed class TrayIcon : IDisposable
 
         _icon = new NotifyIcon
         {
-            Icon = SystemIcons.Application,
+            Icon = LoadSparkIcon(),
             Text = "Spark",
             ContextMenuStrip = menu,
             Visible = true,
         };
         _icon.DoubleClick += (_, _) => open();
+    }
+
+    /// <summary>Логотип Spark из ресурсов, в размере значков трея; если ресурса нет — стандартный значок.</summary>
+    private static Icon LoadSparkIcon()
+    {
+        var info = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/Spark;component/Assets/spark.ico"));
+        if (info is null) return SystemIcons.Application;
+        using var stream = info.Stream;
+        return new Icon(stream, SystemInformation.SmallIconSize);
     }
 
     /// <summary>Подсказка вида «Spark — 42 МБ/с»; без активной скорости — просто «Spark».</summary>

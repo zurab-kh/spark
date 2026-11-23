@@ -46,12 +46,17 @@ public class MainWindowTests
         {
             var window = CreateWindow(
                 Snap("ubuntu-24.04.iso", 6_000 * MB, 4_100 * MB, DownloadStatus.Downloading, 42 * MB, TimeSpan.FromSeconds(45), 0),
-                Snap("setup.exe", 120 * MB, 120 * MB, DownloadStatus.Completed, 0, null, 1));
+                Snap("setup.exe", 120 * MB, 120 * MB, DownloadStatus.Completed, 0, null, 1),
+                Snap("assets_final.zip", 1200 * MB, 144 * MB, DownloadStatus.Paused, 0, null, 2),
+                Snap("movie.mkv", 2000 * MB, 0, DownloadStatus.Queued, 0, null, 3),
+                Snap("driver_pack.rar", null, 0, DownloadStatus.Error, 0, null, 4, "Файл не найден на сервере (404)"));
 
             var texts = CollectText(window);
             Assert.Contains("ubuntu-24.04.iso", texts);
             Assert.Contains(texts, t => t.StartsWith("4.0 ГБ из 5.9 ГБ · 42 МБ/с · осталось 0:45"));
             Assert.Contains("Готово · 120 МБ", texts);
+            Assert.Contains("Приостановлено · 144 МБ из 1.2 ГБ", texts);
+            Assert.Contains("Файл не найден на сервере (404)", texts);
             Assert.DoesNotContain(texts, t => t.Contains(nameof(DownloadItemViewModel)));
             SaveSnapshotIfRequested(window, "main-list.png");
             window.Close();
@@ -67,8 +72,9 @@ public class MainWindowTests
         window.Close();
     }
 
-    private static DownloadSnapshot Snap(string name, long total, long done, DownloadStatus status, double bps, TimeSpan? eta, long order) =>
-        new(Guid.NewGuid(), name, null, "http://x/" + name, total, done, bps, eta, status, null, 16, order);
+    private static DownloadSnapshot Snap(string name, long? total, long done, DownloadStatus status, double bps, TimeSpan? eta,
+        long order, string? statusText = null) =>
+        new(Guid.NewGuid(), name, null, "http://x/" + name, total, done, bps, eta, status, statusText, 16, order);
 
     private static MainWindow CreateWindow(params DownloadSnapshot[] snaps)
     {
@@ -132,7 +138,8 @@ public class MainWindowTests
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
             {
                 var child = VisualTreeHelper.GetChild(parent, i);
-                if (child is TextBlock tb) texts.Add(tb.Text);
+                if (child is TextBlock tb)
+                    texts.Add(tb.Inlines.Count > 1 ? string.Concat(tb.Inlines.OfType<System.Windows.Documents.Run>().Select(r => r.Text)) : tb.Text);
                 Walk(child);
             }
         }

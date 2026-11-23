@@ -8,11 +8,17 @@
     <RootNamespace>Strela.App</RootNamespace>
     <AssemblyName>Spark</AssemblyName>
     <Product>Spark</Product>
+    <ApplicationIcon>Assets\spark.ico</ApplicationIcon>
     <Company>Spark</Company>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Strela.Engine\Strela.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Assets\spark.ico" />
+    <Resource Include="Assets\spark-256.png" />
   </ItemGroup>
 
   <ItemGroup>

@@ -2,10 +2,126 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Spark" Height="560" Width="920" MinWidth="560" MinHeight="340"
+        Icon="pack://application:,,,/Spark;component/Assets/spark.ico"
         AllowDrop="True" DragOver="Window_DragOver" Drop="Window_Drop">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <!-- Цвета из макета Spark (Superdesign). Полупрозрачные заливки читаются и в тёмной, и в светлой теме. -->
+        <SolidColorBrush x:Key="PausedBrush" Color="#F7630C" />
+        <SolidColorBrush x:Key="ErrorCardBrush" Color="#1FC42B1C" />
+        <SolidColorBrush x:Key="ErrorCardStrokeBrush" Color="#66C42B1C" />
+        <LinearGradientBrush x:Key="SparkGradient" StartPoint="0,0" EndPoint="1,1">
+            <GradientStop Offset="0" Color="#FFB300" />
+            <GradientStop Offset="0.5" Color="#FF6A1A" />
+            <GradientStop Offset="1" Color="#FF2D7A" />
+        </LinearGradientBrush>
+
+        <!-- Значок типа файла: цвет по виду файла -->
+        <Style x:Key="TypeBadge" TargetType="Border">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="#269CA3AF" />
+            <Setter Property="TextElement.Foreground" Value="#9CA3AF" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding BadgeKind}" Value="disk">
+                    <Setter Property="Background" Value="#263B82F6" />
+                    <Setter Property="TextElement.Foreground" Value="#60A5FA" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding BadgeKind}" Value="archive">
+                    <Setter Property="Background" Value="#26F59E0B" />
+                    <Setter Property="TextElement.Foreground" Value="#F59E0B" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding BadgeKind}" Value="app">
+                    <Setter Property="Background" Value="#2622C55E" />
+                    <Setter Property="TextElement.Foreground" Value="#22C55E" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding BadgeKind}" Value="media">
+                    <Setter Property="Background" Value="#26A855F7" />
+                    <Setter Property="TextElement.Foreground" Value="#C084FC" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding BadgeKind}" Value="document">
+                    <Setter Property="Background" Value="#2614B8A6" />
+                    <Setter Property="TextElement.Foreground" Value="#2DD4BF" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsError}" Value="True">
+                    <Setter Property="Background" Value="#33C42B1C" />
+                    <Setter Property="TextElement.Foreground" Value="#FF6B6B" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Карточка загрузки; ошибка — красная -->
+        <Style x:Key="DownloadCard" TargetType="Border">
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsError}" Value="True">
+                    <Setter Property="Background" Value="{StaticResource ErrorCardBrush}" />
+                    <Setter Property="BorderBrush" Value="{StaticResource ErrorCardStrokeBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Тонкая полоска прогресса: синяя при загрузке, оранжевая на паузе -->
+        <Style x:Key="ThinProgress" TargetType="ProgressBar">
+            <Setter Property="Height" Value="3" />
+            <Setter Property="Minimum" Value="0" />
+            <Setter Property="Maximum" Value="1" />
+            <Setter Property="Foreground" Value="{DynamicResource AccentFillColorDefaultBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <!-- PART_Track / PART_Indicator: ProgressBar сам выставляет ширину заполнения -->
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid>
+                            <Border x:Name="PART_Track" CornerRadius="1.5" Background="{DynamicResource ControlStrongFillColorDisabledBrush}" />
+                            <Border x:Name="PART_Indicator" CornerRadius="1.5" HorizontalAlignment="Left" Background="{TemplateBinding Foreground}" />
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                    <Setter Property="Foreground" Value="{StaticResource PausedBrush}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Тихая кнопка-значок без рамки, как в макете -->
+        <Style x:Key="GhostIconButton" TargetType="Button">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Margin" Value="2,0,0,0" />
+            <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bg" CornerRadius="6" Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource SubtleFillColorSecondaryBrush}" />
+                                <Setter Property="Foreground" Value="{DynamicResource TextFillColorPrimaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bg" Property="Background" Value="{DynamicResource SubtleFillColorTertiaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource FocusStrokeColorOuterBrush}" />
+                                <Setter TargetName="Bg" Property="BorderThickness" Value="2" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
 
         <!-- Квадратная кнопка-значок 32×32 для действий в строке -->
         <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
@@ -108,9 +224,7 @@
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate>
-                        <Border CornerRadius="8" Padding="12,10" BorderThickness="1"
-                                Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
-                                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+                        <Border Style="{StaticResource DownloadCard}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto" />
@@ -119,75 +233,113 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
-                                <!-- Значок типа файла -->
-                                <Grid Width="42" Height="42" VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <Border CornerRadius="8" Background="{DynamicResource SubtleFillColorSecondaryBrush}" />
-                                    <TextBlock Text="{Binding TypeLabel}" FontSize="11" FontWeight="Bold"
-                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                    <Border Width="18" Height="18" CornerRadius="9" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                            Margin="0,0,-4,-4" Background="{DynamicResource SystemFillColorSuccessBrush}"
-                                            Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="10"
-                                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                    </Border>
-                                    <Border Width="18" Height="18" CornerRadius="9" HorizontalAlignment="Right" VerticalAlignment="Bottom"
-                                            Margin="0,0,-4,-4" Background="{DynamicResource SystemFillColorCriticalBrush}"
-                                            Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}">
-                                        <TextBlock Text="&#xE711;" FontFamily="{StaticResource IconFont}" FontSize="9"
-                                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                    </Border>
-                                </Grid>
+                                <!-- Значок типа файла; у ошибки — предупреждение -->
+                                <Border Width="40" Height="40" Margin="0,0,14,0" VerticalAlignment="Center" Style="{StaticResource TypeBadge}">
+                                    <Grid>
+                                        <TextBlock Text="{Binding TypeLabel}" FontSize="10.5" FontWeight="Bold"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsError}" Value="True">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <TextBlock Text="&#xE7BA;" FontFamily="{StaticResource IconFont}" FontSize="17"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Visibility="{Binding IsError, Converter={StaticResource BoolToVis}}" />
+                                    </Grid>
+                                </Border>
 
                                 <!-- Имя, подробности, прогресс -->
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="SemiBold"
                                                TextTrimming="CharacterEllipsis" ToolTip="{Binding FileName}" />
-                                    <TextBlock Text="{Binding DetailText}" Margin="0,3,0,0" TextTrimming="CharacterEllipsis"
-                                               ToolTip="{Binding DetailText}">
+                                    <TextBlock Margin="0,3,0,0" FontSize="12" TextTrimming="CharacterEllipsis" ToolTip="{Binding DetailText}"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                                        <Run Text="{Binding StatusLabel, Mode=OneWay}" FontWeight="SemiBold">
+                                            <Run.Style>
+                                                <Style TargetType="Run">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsCompleted}" Value="True">
+                                                            <Setter Property="Foreground" Value="{DynamicResource SystemFillColorSuccessBrush}" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                                            <Setter Property="Foreground" Value="{StaticResource PausedBrush}" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Run.Style>
+                                        </Run><Run Text="{Binding DetailTail, Mode=OneWay}">
+                                            <Run.Style>
+                                                <Style TargetType="Run">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsError}" Value="True">
+                                                            <Setter Property="Foreground" Value="#FF6B6B" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Run.Style>
+                                        </Run>
+                                    </TextBlock>
+                                    <ProgressBar Margin="0,9,0,0" Style="{StaticResource ThinProgress}"
+                                                 Value="{Binding Progress, Mode=OneWay}"
+                                                 Visibility="{Binding ShowProgressBar, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+
+                                <!-- Процент или галочка -->
+                                <Grid Grid.Column="2" Margin="18,0,6,0" MinWidth="44" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding PercentText}" FontSize="15" FontWeight="SemiBold" TextAlignment="Right"
+                                               Visibility="{Binding ShowPercent, Converter={StaticResource BoolToVis}}">
                                         <TextBlock.Style>
-                                            <Style TargetType="TextBlock" BasedOn="{StaticResource SecondaryText}">
+                                            <Style TargetType="TextBlock">
                                                 <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding IsError}" Value="True">
-                                                        <Setter Property="Foreground" Value="{DynamicResource SystemFillColorCriticalBrush}" />
+                                                    <DataTrigger Binding="{Binding IsPaused}" Value="True">
+                                                        <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <ProgressBar Margin="0,8,0,0" Height="4" Minimum="0" Maximum="1"
-                                                 Value="{Binding Progress, Mode=OneWay}"
-                                                 Visibility="{Binding ShowProgressBar, Converter={StaticResource BoolToVis}}" />
-                                </StackPanel>
-
-                                <!-- Процент -->
-                                <TextBlock Grid.Column="2" Text="{Binding ProgressText}" Margin="16,0,4,0" MinWidth="44"
-                                           VerticalAlignment="Center" TextAlignment="Right" FontSize="14" FontWeight="SemiBold"
-                                           Visibility="{Binding IsActive, Converter={StaticResource BoolToVis}}" />
+                                    <Border Width="22" Height="22" CornerRadius="11" HorizontalAlignment="Right"
+                                            Background="{DynamicResource SystemFillColorSuccessBrush}"
+                                            Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock Text="&#xE73E;" FontFamily="{StaticResource IconFont}" FontSize="11" Foreground="White"
+                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                </Grid>
 
                                 <!-- Действия -->
-                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
-                                    <Button Style="{StaticResource IconButton}" Content="&#xE769;" ToolTip="Пауза"
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Style="{StaticResource GhostIconButton}" Content="&#xE769;" ToolTip="Пауза"
                                             AutomationProperties.Name="Пауза"
                                             Command="{Binding DataContext.PauseCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
                                             CommandParameter="{Binding}"
                                             Visibility="{Binding CanPause, Converter={StaticResource BoolToVis}}" />
-                                    <Button Style="{StaticResource IconButton}" Content="&#xE768;" ToolTip="Продолжить"
-                                            AutomationProperties.Name="Продолжить"
+                                    <Button Content="&#xE768;" ToolTip="Продолжить" AutomationProperties.Name="Продолжить"
                                             Command="{Binding DataContext.ResumeCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
                                             CommandParameter="{Binding}"
-                                            Visibility="{Binding CanResume, Converter={StaticResource BoolToVis}}" />
-                                    <Button Style="{StaticResource IconButton}" Content="&#xE72C;" ToolTip="Повторить"
+                                            Visibility="{Binding CanResume, Converter={StaticResource BoolToVis}}">
+                                        <Button.Style>
+                                            <Style TargetType="Button" BasedOn="{StaticResource GhostIconButton}">
+                                                <Setter Property="Foreground" Value="{StaticResource PausedBrush}" />
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
+                                    <Button Content="Повторить" Padding="14,5" Margin="4,0,0,0" Cursor="Hand"
                                             AutomationProperties.Name="Повторить"
                                             Command="{Binding DataContext.RetryCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
                                             CommandParameter="{Binding}"
                                             Visibility="{Binding CanRetry, Converter={StaticResource BoolToVis}}" />
-                                    <Button Style="{StaticResource IconButton}" Content="&#xE8E5;" ToolTip="Открыть файл"
+                                    <Button Style="{StaticResource GhostIconButton}" Content="&#xE8E5;" ToolTip="Открыть файл"
                                             AutomationProperties.Name="Открыть файл"
                                             Command="{Binding DataContext.OpenFileCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
                                             CommandParameter="{Binding}"
                                             Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVis}}" />
-                                    <Button Style="{StaticResource IconButton}" Content="&#xE838;" ToolTip="Показать в папке"
+                                    <Button Style="{StaticResource GhostIconButton}" Content="&#xE838;" ToolTip="Показать в папке"
                                             AutomationProperties.Name="Показать в папке"
                                             Command="{Binding DataContext.OpenFolderCommand, RelativeSource={RelativeSource AncestorType=ListView}}"
                                             CommandParameter="{Binding}" />
@@ -243,32 +395,43 @@
                         </Style.Triggers>
                     </Style>
                 </StackPanel.Style>
-                <TextBlock Text="&#xE896;" FontFamily="{StaticResource IconFont}" FontSize="40" HorizontalAlignment="Center"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                <TextBlock Text="Загрузок пока нет" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,0" />
-                <TextBlock Style="{StaticResource SecondaryText}" FontSize="13" Margin="0,6,0,0" TextAlignment="Center"
+                <Image Source="pack://application:,,,/Spark;component/Assets/spark-256.png" Width="64" Height="64" HorizontalAlignment="Center" />
+                <TextBlock Text="Загрузок пока нет" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0" />
+                <TextBlock FontSize="13" Margin="0,6,0,0" TextAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                            Text="Вставьте ссылку сверху, перетащите её в окно&#10;или просто скопируйте — Spark предложит скачать." />
             </StackPanel>
         </Grid>
 
         <!-- Строка состояния -->
-        <Grid Grid.Row="3" Margin="0,10,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                <TextBlock Text="&#xE896;" FontFamily="{StaticResource IconFont}" FontSize="13" VerticalAlignment="Center"
-                           Margin="2,0,8,0" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                <TextBlock Text="{Binding TotalsText}" Style="{StaticResource SecondaryText}" FontSize="13" VerticalAlignment="Center" />
-            </StackPanel>
-            <Button Grid.Column="1" Padding="12,6" Click="Settings_Click" Cursor="Hand" ToolTip="Настройки"
-                    AutomationProperties.Name="Настройки">
-                <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE713;" FontFamily="{StaticResource IconFont}" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <TextBlock Text="Настройки" VerticalAlignment="Center" />
+        <Border Grid.Row="3" Margin="-16,10,-16,-12" Padding="16,6" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" TextElement.FontSize="12"
+                            TextElement.Foreground="{DynamicResource TextFillColorSecondaryBrush}">
+                    <TextBlock Text="&#xE896;" FontFamily="{StaticResource IconFont}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBlock Text="{Binding SpeedTotalText}" VerticalAlignment="Center" />
+                    <Ellipse Width="6" Height="6" Margin="16,0,6,0" VerticalAlignment="Center" Fill="{DynamicResource AccentFillColorDefaultBrush}" />
+                    <TextBlock Text="{Binding ActiveText}" VerticalAlignment="Center" />
+                    <Ellipse Width="6" Height="6" Margin="16,0,6,0" VerticalAlignment="Center" Fill="{DynamicResource TextFillColorTertiaryBrush}" />
+                    <TextBlock Text="{Binding QueuedText}" VerticalAlignment="Center" />
                 </StackPanel>
-            </Button>
-        </Grid>
+                <Button Grid.Column="1" Click="Settings_Click" ToolTip="Настройки" AutomationProperties.Name="Настройки">
+                    <Button.Style>
+                        <Style TargetType="Button" BasedOn="{StaticResource GhostIconButton}">
+                            <Setter Property="Width" Value="Auto" />
+                            <Setter Property="Padding" Value="10,0" />
+                        </Style>
+                    </Button.Style>
+                    <StackPanel Orientation="Horizontal" Margin="10,0">
+                        <TextBlock Text="&#xE713;" FontFamily="{StaticResource IconFont}" FontSize="13" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="Настройки" FontFamily="Segoe UI Variable, Segoe UI" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
     </Grid>
 </Window>

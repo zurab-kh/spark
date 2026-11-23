@@ -17,6 +17,10 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     private string _url = "";
     private string _detailText = "";
     private string _typeLabel = "";
+    private string _statusLabel = "";
+    private string _detailTail = "";
+    private string _badgeKind = "other";
+    private string _percentText = "";
 
     public DownloadItemViewModel(Guid id) => Id = id;
 
@@ -26,6 +30,8 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     /// <summary>0..1</summary>
     public double Progress { get => _progress; private set => SetProperty(ref _progress, value); }
     public string ProgressText { get => _progressText; private set => SetProperty(ref _progressText, value); }
+    /// <summary>Процент для крупной подписи справа («68%»); пусто, если размер неизвестен.</summary>
+    public string PercentText { get => _percentText; private set => SetProperty(ref _percentText, value); }
     public string SpeedText { get => _speedText; private set => SetProperty(ref _speedText, value); }
     public string EtaText { get => _etaText; private set => SetProperty(ref _etaText, value); }
     public string? FilePath { get => _filePath; private set => SetProperty(ref _filePath, value); }
@@ -34,6 +40,12 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     public string DetailText { get => _detailText; private set => SetProperty(ref _detailText, value); }
     /// <summary>Короткая метка типа файла для значка: «ZIP», «ISO», «EXE»…</summary>
     public string TypeLabel { get => _typeLabel; private set => SetProperty(ref _typeLabel, value); }
+    /// <summary>Цветное слово статуса в начале строки подробностей: «Готово», «Приостановлено», «В очереди»; пусто при загрузке и ошибке.</summary>
+    public string StatusLabel { get => _statusLabel; private set => SetProperty(ref _statusLabel, value); }
+    /// <summary>Остаток строки подробностей после <see cref="StatusLabel"/> (вместе с « · », если он есть).</summary>
+    public string DetailTail { get => _detailTail; private set => SetProperty(ref _detailTail, value); }
+    /// <summary>Цвет значка типа: archive, disk, app, media, document или other.</summary>
+    public string BadgeKind { get => _badgeKind; private set => SetProperty(ref _badgeKind, value); }
 
     public DownloadStatus Status
     {
@@ -48,8 +60,13 @@ public sealed partial class DownloadItemViewModel : ObservableObject
             OnPropertyChanged(nameof(IsActive));
             OnPropertyChanged(nameof(IsError));
             OnPropertyChanged(nameof(ShowProgressBar));
+            OnPropertyChanged(nameof(IsPaused));
+            OnPropertyChanged(nameof(ShowPercent));
         }
     }
+
+    public bool IsPaused => Status == DownloadStatus.Paused;
+    public bool ShowPercent => Status is DownloadStatus.Downloading or DownloadStatus.Paused;
 
     public bool IsCompleted => Status == DownloadStatus.Completed;
     public bool IsActive => Status == DownloadStatus.Downloading;
@@ -79,9 +96,31 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         var downloading = s.Status == DownloadStatus.Downloading;
         SpeedText = downloading ? Format.Speed(s.BytesPerSecond) : "";
         EtaText = downloading ? Format.Eta(s.Eta) : "";
+        PercentText = s.TotalBytes is > 0 ? $"{(int)(Progress * 100)}%" : "";
         TypeLabel = LabelFor(s.FileName);
+        BadgeKind = KindFor(TypeLabel);
         DetailText = Detail(s);
+        StatusLabel = s.Status switch
+        {
+            DownloadStatus.Completed => "Готово",
+            DownloadStatus.Paused => "Приостановлено",
+            DownloadStatus.Queued => "В очереди",
+            _ => "",
+        };
+        DetailTail = StatusLabel.Length == 0 ? DetailText
+            : DetailText.StartsWith(StatusLabel + " · ", StringComparison.Ordinal) ? DetailText[StatusLabel.Length..]
+            : DetailText == StatusLabel ? "" : " · " + DetailText;
     }
+
+    private static string KindFor(string label) => label switch
+    {
+        "ZIP" or "RAR" or "7Z" or "TAR" or "GZ" or "BZ2" or "XZ" or "TGZ" or "ZST" => "archive",
+        "ISO" or "IMG" or "VHD" or "VHDX" or "OVA" or "DMG" => "disk",
+        "EXE" or "MSI" or "MSIX" or "APPX" or "APK" or "DEB" or "RPM" or "JAR" => "app",
+        "MP4" or "MKV" or "AVI" or "MOV" or "WEBM" or "M4V" or "MP3" or "FLAC" or "WAV" or "M4A" or "OGG" or "OPUS" => "media",
+        "PDF" or "EPUB" or "DJVU" or "DOCX" or "XLSX" or "PPTX" => "document",
+        _ => "other",
+    };
 
     private string Detail(DownloadSnapshot s)
     {
@@ -90,7 +129,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         {
             DownloadStatus.Completed => $"Готово · {SizeText}",
             DownloadStatus.Queued => s.TotalBytes is > 0 ? $"В очереди · {SizeText}" : "В очереди",
-            DownloadStatus.Paused => $"Пауза · {done}",
+            DownloadStatus.Paused => $"Приостановлено · {done}",
             DownloadStatus.Error => s.StatusText ?? "Ошибка",
             _ => Join(done, SpeedText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}", s.StatusText),
         };

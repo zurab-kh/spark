@@ -15,6 +15,9 @@ public sealed partial class MainViewModel : ObservableObject
     private string _inputText = "";
     private string? _inputHint;
     private string _totalsText = "";
+    private string _speedTotalText = "0 Б/с";
+    private string _activeText = "Активно 0";
+    private string _queuedText = "В очереди 0";
 
     public MainViewModel(IDownloadManager manager)
     {
@@ -46,6 +49,10 @@ public sealed partial class MainViewModel : ObservableObject
 
     public string? InputHint { get => _inputHint; private set => SetProperty(ref _inputHint, value); }
     public string TotalsText { get => _totalsText; private set => SetProperty(ref _totalsText, value); }
+    // Части строки состояния по отдельности — для раскладки с цветными точками.
+    public string SpeedTotalText { get => _speedTotalText; private set => SetProperty(ref _speedTotalText, value); }
+    public string ActiveText { get => _activeText; private set => SetProperty(ref _activeText, value); }
+    public string QueuedText { get => _queuedText; private set => SetProperty(ref _queuedText, value); }
 
     /// <summary>Суммарная скорость активных загрузок, байт/с (для подсказки трея).</summary>
     public double TotalSpeed { get; private set; }
@@ -114,7 +121,10 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         TotalSpeed = speed;
-        TotalsText = $"Всего: {(speed > 0 ? Format.Speed(speed) : "0 Б/с")} · Активно {active} · В очереди {queued}";
+        SpeedTotalText = speed > 0 ? Format.Speed(speed) : "0 Б/с";
+        ActiveText = $"Активно {active}";
+        QueuedText = $"В очереди {queued}";
+        TotalsText = $"Всего: {SpeedTotalText} · {ActiveText} · {QueuedText}";
     }
 
     /// <summary>Каждая строка — абсолютный http/https адрес. Возвращает число добавленных; 0 → подсказка.</summary>

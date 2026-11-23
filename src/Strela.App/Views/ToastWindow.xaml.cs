@@ -42,6 +42,12 @@ public partial class ToastWindow : Window
 
     private void ActionButton_Click(object sender, RoutedEventArgs e) => Fire();
 
+    private void Close_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;   // не считать закрытие кликом по уведомлению
+        Close();
+    }
+
     private void Fire()
     {
         Close();
