@@ -87,7 +87,7 @@ public partial class App : Application
         _clipboard = new ClipboardWatcher();
         _clipboard.TextCopied += OnClipboardText;
         _lag = new UiLagMonitor(Dispatcher, _log);
-        SessionEnding += (_, _) => DisposeManager();
+        SessionEnding += (_, _) => { _exiting = true; DisposeManager(); };   // выход из Windows не должен упираться в трей
 
         _vm.AlreadyDownloaded += item =>
             ShowToast($"Уже скачано: {item.FileName}", () => Shell.RevealInFolder(item.FilePath), "Показать в папке");
@@ -133,9 +133,9 @@ public partial class App : Application
     private void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
         if (_exiting) return;
+        // Крестик всегда прячет окно в трей; закрыть Spark можно только через трей → «Выход».
         e.Cancel = true;
-        if (_manager!.HasActiveWork) _window!.Hide();   // загрузки идут — прячемся в трей
-        else _ = ExitAsync();
+        _window!.Hide();
     }
 
     private async Task ExitAsync()
