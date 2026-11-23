@@ -22,8 +22,16 @@ public sealed class TestFileServer : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly ConcurrentDictionary<int, FileEntry> _files = new();
     private int _nextId;
+    private string? _lastProtocol;
+    private string? _lastUserAgent;
 
     public Uri BaseAddress { get; }
+
+    /// <summary>Протокол последнего запроса, например "HTTP/1.1".</summary>
+    public string? LastProtocol => Volatile.Read(ref _lastProtocol);
+
+    /// <summary>User-Agent последнего запроса.</summary>
+    public string? LastUserAgent => Volatile.Read(ref _lastUserAgent);
 
     private TestFileServer(WebApplication app, Uri baseAddress)
     {
@@ -116,6 +124,9 @@ public sealed class TestFileServer : IAsyncDisposable
         var request = context.Request;
         var response = context.Response;
         var isHead = HttpMethods.IsHead(request.Method);
+
+        Volatile.Write(ref _lastProtocol, request.Protocol);
+        Volatile.Write(ref _lastUserAgent, request.Headers.UserAgent.ToString());
 
         if (!(isHead || HttpMethods.IsGet(request.Method)) ||
             !TryParseId(request.Path.Value ?? "", out var id) || !_files.TryGetValue(id, out var entry))
