@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Windows;
 using Strela.App.Services;
 using Strela.App.ViewModels;
+using Strela.App.Views;
 using Strela.Engine;
 using Strela.Engine.Manager;
 
@@ -8,7 +10,29 @@ namespace Strela.App;
 
 public partial class App : Application
 {
+    private const string MutexName = @"Local\Strela.SingleInstance";
+
+    private readonly Stopwatch _startup = new();
+    private Mutex? _mutex;
+    private bool _ownsMutex;
+    private FileLog? _log;
+    private SettingsStore? _settingsStore;
+    private AppSettings _settings = new();
+    private string _stateFolder = "";
     private IDownloadManager? _manager;
+    private bool _managerDisposed;
+    private MainViewModel? _vm;
+    private MainWindow? _window;
+    private SettingsWindow? _settingsWindow;
+    private ToastWindow? _toast;
+    private TrayIcon? _tray;
+    private ClipboardWatcher? _clipboard;
+    private UiLagMonitor? _lag;
+    private ISingleInstanceChannel? _channel;
+    private bool _exiting;
+
+    // Task 12: replace with FileUrlDetector.TryDetect
+    private readonly Func<string, Uri?> _detectFileUrl = text => LinkParser.TryParseHttp(text, out var u) ? u : null;
 
     public App()
     {
@@ -19,23 +43,175 @@ public partial class App : Application
 
     protected override async void OnStartup(StartupEventArgs e)
     {
+        _startup.Start();
         base.OnStartup(e);
-        var data = KnownFolders.AppData();
-        var options = new EngineOptions
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var args = e.Args.Where(a => LinkParser.TryParseHttp(a, out _)).ToList();
+        _mutex = new Mutex(true, MutexName, out _ownsMutex);
+        _channel = new PipeSingleInstanceChannel();
+        if (!_ownsMutex)
         {
-            DownloadFolder = KnownFolders.Downloads(),
-            StateFolder = Path.Combine(data, "downloads"),
-        };
-        _manager = ManagerFactory.Create(options, NullLog.Instance);
-        await _manager.InitializeAsync();
-        var window = new MainWindow(new MainViewModel(_manager));
-        MainWindow = window;
-        window.Show();
+            // Уже запущена другая копия: передаём ей ссылки (или просьбу показать окно) и выходим.
+            Task.Run(() => _channel.SendAsync(args)).Wait(TimeSpan.FromSeconds(5));
+            Shutdown();
+            return;
+        }
+
+        var data = KnownFolders.AppData();
+        _log = new FileLog(Path.Combine(data, "logs"));
+        DispatcherUnhandledException += (_, ex) => _log.Error("Необработанное исключение в UI", ex.Exception);
+
+        _settingsStore = new SettingsStore(Path.Combine(data, "settings.json"));
+        _settings = _settingsStore.Load();
+        _stateFolder = Path.Combine(data, "downloads");
+        _manager = ManagerFactory.Create(_settings.ToEngineOptions(_stateFolder), _log);
+        try
+        {
+            await _manager.InitializeAsync();
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Не удалось загрузить сохранённые загрузки", ex);
+        }
+
+        _vm = new MainViewModel(_manager);
+        _window = new MainWindow(_vm);
+        MainWindow = _window;
+        _window.ContentRendered += OnFirstRender;
+        _window.Closing += OnWindowClosing;
+        _window.Refreshed += () => _tray?.SetSpeed(Format.Speed(_vm.TotalSpeed));
+        _window.SettingsRequested += ShowSettings;
+
+        _tray = new TrayIcon(ShowWindow, () => _manager.PauseAll(), () => _manager.ResumeAll(), () => _ = ExitAsync());
+        _manager.Completed += snap => Dispatcher.InvokeAsync(() => OnDownloadCompleted(snap));
+        _clipboard = new ClipboardWatcher();
+        _clipboard.TextCopied += OnClipboardText;
+        _lag = new UiLagMonitor(Dispatcher, _log);
+        SessionEnding += (_, _) => DisposeManager();
+
+        _channel.Received += urls => Dispatcher.InvokeAsync(() =>
+        {
+            _log.Info($"Получено ссылок от другого экземпляра: {urls.Count}");
+            try { if (urls.Count > 0) _vm.AddLinks(string.Join("\n", urls)); }
+            catch (Exception ex) { _log.Error("Не удалось добавить ссылки от другого экземпляра", ex); }
+            ShowWindow();
+        });
+        _channel.Start();
+
+        if (args.Count > 0) _vm.AddLinks(string.Join("\n", args));
+        _window.Show();
+    }
+
+    private void OnFirstRender(object? sender, EventArgs e)
+    {
+        _window!.ContentRendered -= OnFirstRender;
+        _log!.Info($"startup {_startup.ElapsedMilliseconds} ms");
+    }
+
+    private void ShowWindow()
+    {
+        if (_window is null) return;
+        _window.Show();
+        if (_window.WindowState == WindowState.Minimized) _window.WindowState = WindowState.Normal;
+        _window.Activate();
+    }
+
+    private void OnWindowClosing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (_exiting) return;
+        e.Cancel = true;
+        if (_manager!.HasActiveWork) _window!.Hide();   // загрузки идут — прячемся в трей
+        else _ = ExitAsync();
+    }
+
+    private async Task ExitAsync()
+    {
+        if (_exiting) return;
+        _exiting = true;
+        try
+        {
+            if (_manager is not null && !_managerDisposed)
+            {
+                _managerDisposed = true;
+                await _manager.DisposeAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _log?.Error("Ошибка при остановке менеджера", ex);
+        }
+        Shutdown();
+    }
+
+    private void DisposeManager()
+    {
+        if (_manager is null || _managerDisposed) return;
+        _managerDisposed = true;
+        try { _manager.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5)); }
+        catch (Exception ex) { _log?.Error("Ошибка при остановке менеджера", ex); }
+    }
+
+    private void OnClipboardText(string text)
+    {
+        if (!_settings.WatchClipboard || _vm is null) return;
+        var line = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+        if (line is null || _detectFileUrl(line) is not { } url) return;
+        if (_vm.Contains(url.AbsoluteUri) || _vm.Contains(url.OriginalString)) return;
+        var name = Uri.UnescapeDataString(url.Segments.LastOrDefault()?.Trim('/') ?? "");
+        if (name.Length == 0) name = url.Host;
+        _log?.Info($"Буфер обмена: ссылка {url.AbsoluteUri}");
+        ShowToast($"Скачать {name}?", () => _vm.AddLinks(url.AbsoluteUri), "Скачать");
+    }
+
+    private void OnDownloadCompleted(DownloadSnapshot snap)
+    {
+        if (!_settings.Notifications) return;
+        ShowToast($"Готово: {snap.FileName}", () => Shell.RevealInFolder(snap.FilePath));
+    }
+
+    private void ShowToast(string message, Action onClick, string? buttonText = null)
+    {
+        _toast?.Close();
+        var toast = new ToastWindow(message, onClick, buttonText);
+        toast.Closed += (_, _) => { if (ReferenceEquals(_toast, toast)) _toast = null; };
+        _toast = toast;
+        toast.Show();
+    }
+
+    private void ShowSettings()
+    {
+        if (_settingsWindow is not null)
+        {
+            _settingsWindow.Activate();
+            return;
+        }
+        var w = new SettingsWindow(_settings, ApplySettings) { Owner = _window };
+        w.Closed += (_, _) => _settingsWindow = null;
+        _settingsWindow = w;
+        w.Show();
+    }
+
+    private void ApplySettings(AppSettings s)
+    {
+        _settings = s;
+        try { _settingsStore!.Save(s); }
+        catch (Exception ex) { _log!.Error("Не удалось сохранить настройки", ex); }
+        _manager!.ApplyOptions(s.ToEngineOptions(_stateFolder));
+        try { Autostart.Set(s.StartWithWindows, Environment.ProcessPath ?? ""); }
+        catch (Exception ex) { _log!.Error("Не удалось изменить автозапуск", ex); }
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _manager?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
+        DisposeManager();
+        _lag?.Dispose();
+        _clipboard?.Dispose();
+        _channel?.Dispose();
+        _tray?.Dispose();
+        _log?.Dispose();
+        if (_ownsMutex) _mutex?.ReleaseMutex();
+        _mutex?.Dispose();
         base.OnExit(e);
     }
 }
