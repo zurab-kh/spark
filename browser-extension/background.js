@@ -1,7 +1,8 @@
 // Spark: перехват загрузок браузера. Отменяем загрузку в браузере только после того,
 // как Spark подтвердил приём ссылки (ok:true); иначе браузер качает сам.
+import { shouldIntercept, baseName } from './filter.js';
+
 const HOST = 'com.spark.downloader';
-const MIN_SIZE = 1024 * 1024;     // меньше 1 МБ — пусть качает браузер
 const ALT_WINDOW_MS = 3000;       // сколько после Alt+клика загрузка считается «браузерной»
 
 let lastAltAt = 0;
@@ -32,21 +33,6 @@ async function cookieHeader(url) {
   }
 }
 
-function baseName(path) {
-  if (!path) return null;
-  const name = path.split(/[\/]/).pop();
-  return name || null;
-}
-
-function shouldSkip(item) {
-  let url;
-  try { url = new URL(item.url); } catch { return true; }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return true;
-  const size = item.totalBytes > 0 ? item.totalBytes : item.fileSize > 0 ? item.fileSize : -1;
-  if (size >= 0 && size < MIN_SIZE) return true;
-  return false;
-}
-
 async function refreshBadge() {
   const on = await isEnabled();
   await chrome.action.setBadgeText({ text: on ? '' : 'off' });
@@ -55,7 +41,8 @@ async function refreshBadge() {
 
 chrome.downloads.onCreated.addListener(async (item) => {
   try {
-    if (!(await isEnabled()) || altRecent() || shouldSkip(item)) return;
+    // shouldIntercept also filters out the download history Chrome replays when the extension starts.
+    if (!shouldIntercept(item) || !(await isEnabled()) || altRecent()) return;
 
     const message = {
       url: item.url,
