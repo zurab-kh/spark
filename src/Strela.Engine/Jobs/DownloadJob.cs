@@ -21,13 +21,25 @@ namespace Strela.Engine.Jobs;
 /// Locking: <c>_segmentsLock</c> guards the segment list, segment ownership and the live-worker count; steals
 /// (split + add) and the "all done" check happen under it, and so does the state snapshot, so a freshly stolen
 /// tail is never missed. The <see cref="JobStateSaver"/> serialises state saves with single-stream truncation.
-/// Order: saver → _segmentsLock → Segment.
+/// <c>_workersLock</c> guards the current phase's worker list (which auto mode grows while it runs).
+/// Order: saver → _workersLock → _segmentsLock → Segment.
+/// </para>
+/// <para>
+/// Auto mode (<see cref="EngineOptions.ConnectionsPerFile"/> = 0): start with 8 connections; every
+/// <see cref="EngineOptions.AutoTuneInterval"/> add 4 more (new workers steal tails) while at least 8 MB remain and
+/// the last step raised throughput by ≥ 10%; once a step does not pay off the count is frozen. Never above 32 or the
+/// host's ceiling.
 /// </para>
 /// </summary>
 internal sealed class DownloadJob
 {
     private const string DiskFullText = "Нет места на диске";
     private const string StaleLinkText = "Ссылка устарела — обновите ссылку";
+    private const int AutoStartConnections = 8;
+    private const int AutoStepConnections = 4;
+    private const int AutoMaxConnections = 32;
+    private const long AutoMinRemainingBytes = 8L << 20;
+    private const double AutoMinGrowth = 1.10;
     private static readonly TimeSpan SpeedWindow = TimeSpan.FromSeconds(3);
 
     private readonly HttpClient _http;
@@ -51,6 +63,12 @@ internal sealed class DownloadJob
     private int _rangesIgnored;               // 1 = a ranged request got the whole file: rerun as single-stream
     private int _liveWorkers;                 // guarded by _segmentsLock
     private bool _segmentsLoaded;             // guarded by _segmentsLock; false until Prepare filled _segments
+    private int _peakWorkers;
+
+    private readonly object _workersLock = new();
+    private readonly List<SegmentWorker> _workers = [];   // the current phase; guarded by _workersLock
+    private readonly List<Task> _workerTasks = [];        // guarded by _workersLock
+    private bool _workersClosed;                          // guarded by _workersLock: the phase ended, add no more
 
     public DownloadJob(DownloadState state, EngineOptions options, HttpClient http, HostLimits limits,
                        StateStore store, IStrelaLog log, Func<string, bool> isPathTaken)
@@ -92,6 +110,14 @@ internal sealed class DownloadJob
     internal Uri Uri { get; private set; } = null!;
     internal bool SingleStream { get; private set; }
     internal bool KnownLength => State.TotalBytes is not null;
+
+    /// <summary>Auto mode: the number of connections is tuned while downloading.</summary>
+    internal bool AutoConnections => Options.ConnectionsPerFile <= 0;
+
+    /// <summary>The most workers that were live at once in this job (for tests and diagnostics).</summary>
+    internal int PeakWorkers => Volatile.Read(ref _peakWorkers);
+
+    private int RequestedConnections => AutoConnections ? AutoMaxConnections : Options.ConnectionsPerFile;
 
     public async Task<JobOutcome> RunAsync(CancellationToken ct)
     {
@@ -223,7 +249,7 @@ internal sealed class DownloadJob
                     ? $"{State.FileName}: saved segments do not cover the file, downloading it again"
                     : $"{State.FileName}: part file is missing, starting over");
             }
-            segments = SegmentPlanner.InitialSplit(State.TotalBytes!.Value, ConnectionCeiling(), Options.MinSegmentBytes);
+            segments = SegmentPlanner.InitialSplit(State.TotalBytes!.Value, StartConnections(), Options.MinSegmentBytes);
         }
 
         lock (_segmentsLock)
@@ -292,7 +318,11 @@ internal sealed class DownloadJob
         }
     }
 
-    private int ConnectionCeiling() => Math.Max(1, _limits.Ceiling(Uri.Host, Options.ConnectionsPerFile));
+    private int ConnectionCeiling() => Math.Max(1, _limits.Ceiling(Uri.Host, RequestedConnections));
+
+    /// <summary>Connections a phase starts with: the ceiling, or in auto mode at most <see cref="AutoStartConnections"/>.</summary>
+    private int StartConnections() =>
+        AutoConnections ? Math.Min(AutoStartConnections, ConnectionCeiling()) : ConnectionCeiling();
 
     /// <summary>A pause that raced with an error wins: pausing never ends a download in Error.</summary>
     private static bool PausedOver(JobOutcome outcome, CancellationToken ct) =>
@@ -339,50 +369,187 @@ internal sealed class DownloadJob
     private async Task RunWorkersAsync(CancellationToken ct)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var auto = AutoConnections && !SingleStream;
         int count;
         lock (_segmentsLock)
         {
-            count = SingleStream ? 1 : Math.Max(1, Math.Min(ConnectionCeiling(), _segments.Count));
+            count = SingleStream ? 1 : Math.Max(1, Math.Min(StartConnections(), _segments.Count));
             _liveWorkers = count;
         }
         _log.Info($"start {State.FileName}: {count} connection(s), {State.TotalBytes?.ToString() ?? "?"} bytes");
+        if (auto)
+            _log.Info($"auto: {count} connections");
 
-        var workers = new SegmentWorker[count];
-        for (var i = 0; i < count; i++)
-            workers[i] = new SegmentWorker(this, i, stop.Token);
+        lock (_workersLock)
+        {
+            _workers.Clear();
+            _workerTasks.Clear();
+            _workersClosed = false;
+            StartWorkers(count, stop.Token);
+        }
+        NotePeak(count);
         _stop = stop;
 
         using var watchStop = new CancellationTokenSource();
-        var watch = WatchSlowAsync(workers, watchStop.Token);
+        var watch = WatchSlowAsync(mayGrow: auto, watchStop.Token);
+        var tune = auto ? AutoTuneAsync(stop.Token, watchStop.Token) : Task.CompletedTask;
         try
         {
-            await Task.WhenAll(workers.Select(w => Task.Run(w.RunAsync, CancellationToken.None)));   // never throw
+            // Auto mode may add workers while we wait: wait again until no new ones appeared, then close the phase.
+            while (true)
+            {
+                Task[] running;
+                lock (_workersLock)
+                    running = [.. _workerTasks];
+                await Task.WhenAll(running);   // workers never throw
+                lock (_workersLock)
+                {
+                    if (_workerTasks.Count == running.Length)
+                    {
+                        _workersClosed = true;
+                        break;
+                    }
+                }
+            }
         }
         finally
         {
+            lock (_workersLock)
+                _workersClosed = true;
             watchStop.Cancel();
             await watch;
+            await tune;
             _stop = null;
         }
+    }
+
+    /// <summary>Creates and starts <paramref name="count"/> workers. Caller holds _workersLock and has counted them live.</summary>
+    private void StartWorkers(int count, CancellationToken token)
+    {
+        for (var i = 0; i < count; i++)
+        {
+            var worker = new SegmentWorker(this, _workers.Count, token);
+            _workers.Add(worker);
+            _workerTasks.Add(Task.Run(worker.RunAsync, CancellationToken.None));
+        }
+    }
+
+    private void NotePeak(int live)
+    {
+        int seen;
+        while (live > (seen = Volatile.Read(ref _peakWorkers))
+               && Interlocked.CompareExchange(ref _peakWorkers, live, seen) != seen)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Auto mode: every AutoTuneInterval measures the job's throughput over the interval. The first step always adds
+    /// connections; later steps only while the previous one raised throughput by ≥ 10% over the interval before it.
+    /// Stops for good (frozen) when a step did not pay off, fewer than 8 MB remain, or no connection can be added
+    /// (32, or the host's ceiling after 429/503).
+    /// </summary>
+    private async Task AutoTuneAsync(CancellationToken workerToken, CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(Options.AutoTuneInterval);
+        var clock = Stopwatch.StartNew();
+        var lastBytes = ReceivedBytes();
+        var lastTime = TimeSpan.Zero;
+        double? beforeStep = null;   // throughput of the interval before the last step
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                var now = clock.Elapsed;
+                var bytes = ReceivedBytes();
+                var rate = (bytes - lastBytes) / Math.Max(0.001, (now - lastTime).TotalSeconds);
+                lastBytes = bytes;
+                lastTime = now;
+
+                if (beforeStep is { } before && rate < before * AutoMinGrowth)
+                {
+                    _log.Info($"auto: {State.FileName}: frozen, {rate / 1024:0} KB/s after the step vs {before / 1024:0} KB/s before");
+                    return;
+                }
+                if (State.TotalBytes is not { } total || total - DownloadedBytes < AutoMinRemainingBytes)
+                    return;   // the tail: more connections would only split crumbs
+                if (AddWorkers(AutoStepConnections, workerToken) == 0)
+                    return;   // at 32 or the host's ceiling
+                beforeStep = rate;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    /// <summary>
+    /// Bytes read from the network by this phase's workers. Throughput is measured on these, not on committed
+    /// bytes: those arrive in BufferBytes blocks, far too coarse for a short interval.
+    /// </summary>
+    private long ReceivedBytes()
+    {
+        lock (_workersLock)
+        {
+            long sum = 0;
+            foreach (var w in _workers)
+                sum += w.ReceivedBytes;
+            return sum;
+        }
+    }
+
+    /// <summary>Adds up to <paramref name="step"/> workers within the ceiling; returns how many were added.</summary>
+    private int AddWorkers(int step, CancellationToken token)
+    {
+        int added, live;
+        lock (_workersLock)
+        {
+            if (_workersClosed || token.IsCancellationRequested)
+                return 0;
+            lock (_segmentsLock)
+            {
+                // Nobody live: everything is done or reserved, there is nothing to share.
+                added = _liveWorkers == 0 ? 0 : Math.Clamp(ConnectionCeiling() - _liveWorkers, 0, step);
+                _liveWorkers += added;
+                live = _liveWorkers;
+            }
+            StartWorkers(added, token);
+        }
+
+        if (added > 0)
+        {
+            NotePeak(live);
+            _log.Info($"auto: {live} connections");
+        }
+        return added;
     }
 
     /// <summary>
     /// Every SlowCheckInterval: each open connection's speed and remaining bytes go to the
     /// <see cref="SlowConnectionMonitor"/>; flagged connections are reopened from their segment's Position.
     /// </summary>
-    private async Task WatchSlowAsync(SegmentWorker[] workers, CancellationToken token)
+    private async Task WatchSlowAsync(bool mayGrow, CancellationToken token)
     {
-        if (workers.Length < 2)
-            return;
+        lock (_workersLock)
+        {
+            if (_workers.Count < 2 && !mayGrow)
+                return;
+        }
         var monitor = new SlowConnectionMonitor(Options.SlowThreshold, Options.SlowGrace, 2 * Options.MinSegmentBytes);
-        var meters = workers.Select(_ => new SpeedMeter(SpeedWindow)).ToArray();
-        var samples = new List<WorkerSample>(workers.Length);
+        var meters = new List<SpeedMeter>();
+        var samples = new List<WorkerSample>();
         var clock = Stopwatch.StartNew();
         using var timer = new PeriodicTimer(Options.SlowCheckInterval);
         try
         {
             while (await timer.WaitForNextTickAsync(token))
             {
+                SegmentWorker[] workers;
+                lock (_workersLock)
+                    workers = [.. _workers];
+                while (meters.Count < workers.Length)
+                    meters.Add(new SpeedMeter(SpeedWindow));
+
                 var now = clock.Elapsed;
                 samples.Clear();
                 foreach (var w in workers)
@@ -449,18 +616,21 @@ internal sealed class DownloadJob
     /// </summary>
     internal bool TryLeaveThrottled(int workerId, Segment segment)
     {
+        int live;
         lock (_segmentsLock)
         {
             if (_liveWorkers <= 1)
                 return false;
-            _liveWorkers--;
+            live = --_liveWorkers;
             _owned.Remove(segment);
         }
 
         var working = Volatile.Read(ref _receiving);
         _limits.Lower(Uri.Host, working);
         _log.Warn($"throttle: {State.FileName}: connection {workerId} leaves, {working} receiving, " +
-                  $"ceiling for {Uri.Host}: {_limits.Ceiling(Uri.Host, Options.ConnectionsPerFile)}");
+                  $"ceiling for {Uri.Host}: {_limits.Ceiling(Uri.Host, RequestedConnections)}");
+        if (AutoConnections)
+            _log.Info($"auto: {live} connections");
         return true;
     }
 

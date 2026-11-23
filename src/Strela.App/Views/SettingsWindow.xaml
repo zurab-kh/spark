@@ -64,12 +64,12 @@
                 <TextBlock Text="&#xE8CB;" Style="{StaticResource CardIcon}" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock Text="Соединений на файл" />
-                    <TextBlock Text="Больше соединений — быстрее на серверах с ограничением скорости. 1–32, по умолчанию 16."
+                    <TextBlock Text="Авто: Spark сам подбирает число соединений под сервер (до 32)."
                                Style="{StaticResource Hint}" />
                 </StackPanel>
-                <TextBox Grid.Column="2" x:Name="ConnectionsBox" Width="72" Margin="12,0,0,0" MinHeight="32"
-                         VerticalContentAlignment="Center" TextAlignment="Center" VerticalAlignment="Center"
-                         AutomationProperties.Name="Соединений на файл" />
+                <ComboBox Grid.Column="2" x:Name="ConnectionsCombo" Width="190" Margin="12,0,0,0" MinHeight="32"
+                          VerticalContentAlignment="Center" VerticalAlignment="Center" MaxDropDownHeight="320"
+                          AutomationProperties.Name="Соединений на файл" />
             </Grid>
         </Border>
 

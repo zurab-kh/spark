@@ -66,6 +66,47 @@ public sealed class DownloadJobTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Auto_PerConnectionLimit_GrowsAndBeatsFixed8()
+    {
+        // 500 KB/s per connection: every added connection adds throughput, so auto keeps growing (8 → 12 → … ≥ 24)
+        // and finishes well before a fixed 8 (~12.6 s). Both run at once: the limit is per connection.
+        var content = TestData.Random(48 * MB, 40);
+        var serve = new ServeOptions(BytesPerSecondPerConnection: 500_000);
+        var autoUrl = _server.AddFile("auto.bin", content, serve);
+        var fixedUrl = _server.AddFile("fixed.bin", content, serve);
+
+        var auto = Timed(() => RunJob(autoUrl, Options() with { ConnectionsPerFile = 0, AutoTuneInterval = TimeSpan.FromSeconds(0.5) }));
+        var fixed8 = Timed(() => RunJob(fixedUrl, Options() with { ConnectionsPerFile = 8 }));
+        var ((autoJob, autoOutcome), autoTime) = await auto;
+        var ((fixedJob, fixedOutcome), fixedTime) = await fixed8;
+
+        var autoLog = string.Join(" | ", _log.Entries.Where(e => e.Message.StartsWith("auto:", StringComparison.Ordinal)).Select(e => e.Message));
+        Assert.Equal(DownloadStatus.Completed, autoOutcome.Status);
+        Assert.Equal(DownloadStatus.Completed, fixedOutcome.Status);
+        Assert.Equal(TestData.Sha256(content), TestData.Sha256(autoOutcome.FinalPath!));
+        Assert.Equal(TestData.Sha256(content), TestData.Sha256(fixedOutcome.FinalPath!));
+        Assert.True(autoJob.PeakWorkers >= 24, $"peak {autoJob.PeakWorkers}; {autoLog}");
+        Assert.True(autoJob.PeakWorkers <= 32, $"peak {autoJob.PeakWorkers}; {autoLog}");
+        Assert.Equal(8, fixedJob.PeakWorkers);
+        Assert.True(autoTime < fixedTime, $"auto {autoTime}, fixed 8 {fixedTime}; {autoLog}");
+        Assert.True(_log.Contains("Info", "auto: 24 connections"), autoLog);
+    }
+
+    [Fact]
+    public async Task Auto_SmallFile_StaysAtStart()
+    {
+        // 6 MB: below the 8 MB that must remain for a step, so auto never adds connections.
+        var content = TestData.Random(6 * MB, 41);
+        var url = _server.AddFile("a.bin", content, new ServeOptions(BytesPerSecondPerConnection: OneMBps));
+
+        var (job, outcome) = await RunJob(url, Options() with { ConnectionsPerFile = 0, AutoTuneInterval = TimeSpan.FromSeconds(0.2) });
+
+        Assert.Equal(DownloadStatus.Completed, outcome.Status);
+        Assert.Equal(TestData.Sha256(content), TestData.Sha256(outcome.FinalPath!));
+        Assert.Equal(6, job.PeakWorkers);   // 6 segments of 1 MB (MinSegmentBytes)
+    }
+
+    [Fact]
     public async Task NoTail_WorkStealingKicksIn()
     {
         // With every connection at exactly 1 MB/s the four equal segments finish together and nothing is left
@@ -276,7 +317,15 @@ public sealed class DownloadJobTests : IAsyncLifetime
         Assert.Equal(TestData.Sha256(content), TestData.Sha256(result));   // everything else exact
     }
 
-    private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder };
+    // Fixed 16 connections: these tests depend on the connection count (auto mode has its own tests).
+    private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder, ConnectionsPerFile = 16 };
+
+    private static async Task<(T Result, TimeSpan Elapsed)> Timed<T>(Func<Task<T>> run)
+    {
+        var clock = Stopwatch.StartNew();
+        var result = await run();
+        return (result, clock.Elapsed);
+    }
 
     private DownloadJob NewJob(DownloadState state, EngineOptions options) =>
         new(state, options, _http, new HostLimits(), new StateStore(options.StateFolder), _log, _ => false);

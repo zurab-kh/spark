@@ -69,6 +69,44 @@ public sealed class DownloadJobResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Auto_MaxConcurrent6_StaysWithinServerLimit()
+    {
+        // Auto starts with 8 against a server that admits 6: two get 503 and leave, the host ceiling drops,
+        // and auto never grows past it. After the first reject at most 6 + 1 (a reject still in flight) are open.
+        var content = TestData.Random(32 * MB, 24);
+        var url = _server.AddFile("a.bin", content, new ServeOptions(BytesPerSecondPerConnection: 2 * OneMBps, MaxConcurrent: 6));
+        var options = Options() with { ConnectionsPerFile = 0, AutoTuneInterval = TimeSpan.FromSeconds(0.5) };
+        Directory.CreateDirectory(options.DownloadFolder);
+        var job = NewJob(NewState(url), options);
+
+        using var sampling = new CancellationTokenSource();
+        var maxAfterReject = 0;
+        var sampler = Task.Run(async () =>
+        {
+            var rejected = false;
+            while (!sampling.IsCancellationRequested)
+            {
+                rejected = rejected || LogHas("throttle");
+                if (rejected)
+                    maxAfterReject = Math.Max(maxAfterReject, job.ActiveConnections);
+                await Task.Delay(2);
+            }
+        });
+        var outcome = await job.RunAsync(CancellationToken.None);
+        sampling.Cancel();
+        await sampler;
+
+        var autoLog = string.Join(" | ", _log.Entries.Where(e => e.Message.StartsWith("auto:", StringComparison.Ordinal)
+                                                              || e.Message.StartsWith("throttle", StringComparison.Ordinal)).Select(e => e.Message));
+        Assert.Equal(DownloadStatus.Completed, outcome.Status);
+        Assert.Equal(TestData.Sha256(content), TestData.Sha256(outcome.FinalPath!));
+        Assert.True(LogHas("throttle"), "the server never rejected a connection");
+        Assert.True(_server.MaxConcurrentSeen(url) <= 6, $"server saw {_server.MaxConcurrentSeen(url)}");
+        Assert.True(maxAfterReject <= 6 + 1, $"{maxAfterReject} open after the first reject; {autoLog}");
+        Assert.Equal(8, job.PeakWorkers);   // never grew past the start
+    }
+
+    [Fact]
     public async Task SlowConnection_Replaced()
     {
         // Request 1 is the probe, so 2 slow requests make exactly the first data connection slow (50 KB/s).
@@ -249,7 +287,8 @@ public sealed class DownloadJobResilienceTests : IAsyncLifetime
 
     // ---- helpers ------------------------------------------------------------------------------------------
 
-    private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder };
+    // Fixed 16 connections: these tests depend on the connection count (auto mode has its own tests).
+    private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder, ConnectionsPerFile = 16 };
 
     private DownloadState NewState(Uri url) => new()
     {

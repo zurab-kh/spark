@@ -4,8 +4,10 @@ namespace Strela.App.Services;
 
 public sealed record AppSettings
 {
+    public const int MaxConnectionsPerFile = 32;
+
     public string DownloadFolder { get; init; } = "";   // "" = системная «Загрузки»
-    public int ConnectionsPerFile { get; init; } = 16;  // 1..32
+    public int ConnectionsPerFile { get; init; } = 0;   // 0 = авто, иначе 1..32
     public int MaxActiveDownloads { get; init; } = 3;   // 1..10
     public bool WatchClipboard { get; init; } = true;
     public bool Notifications { get; init; } = true;
@@ -15,7 +17,7 @@ public sealed record AppSettings
     public AppSettings Clamped() => this with
     {
         DownloadFolder = DownloadFolder ?? "",
-        ConnectionsPerFile = Math.Clamp(ConnectionsPerFile, 1, 32),
+        ConnectionsPerFile = Math.Clamp(ConnectionsPerFile, 0, MaxConnectionsPerFile),
         MaxActiveDownloads = Math.Clamp(MaxActiveDownloads, 1, 10),
     };
 

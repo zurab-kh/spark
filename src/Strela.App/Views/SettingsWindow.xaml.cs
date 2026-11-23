@@ -17,7 +17,11 @@ public partial class SettingsWindow : Window
         _onSave = onSave;
         InitializeComponent();
         FolderBox.Text = current.DownloadFolder;
-        ConnectionsBox.Text = current.ConnectionsPerFile.ToString(CultureInfo.InvariantCulture);
+        // Index = value: 0 is auto, 1..32 a fixed count.
+        ConnectionsCombo.Items.Add("Авто (рекомендуется)");
+        for (var n = 1; n <= AppSettings.MaxConnectionsPerFile; n++)
+            ConnectionsCombo.Items.Add(n.ToString(CultureInfo.InvariantCulture));
+        ConnectionsCombo.SelectedIndex = Math.Clamp(current.ConnectionsPerFile, 0, AppSettings.MaxConnectionsPerFile);
         ActiveBox.Text = current.MaxActiveDownloads.ToString(CultureInfo.InvariantCulture);
         ClipboardCheck.IsChecked = current.WatchClipboard;
         NotifyCheck.IsChecked = current.Notifications;
@@ -38,7 +42,7 @@ public partial class SettingsWindow : Window
         var settings = _current with
         {
             DownloadFolder = FolderBox.Text.Trim(),
-            ConnectionsPerFile = ParseOr(ConnectionsBox.Text, _current.ConnectionsPerFile),
+            ConnectionsPerFile = ConnectionsCombo.SelectedIndex >= 0 ? ConnectionsCombo.SelectedIndex : _current.ConnectionsPerFile,
             MaxActiveDownloads = ParseOr(ActiveBox.Text, _current.MaxActiveDownloads),
             WatchClipboard = ClipboardCheck.IsChecked == true,
             Notifications = NotifyCheck.IsChecked == true,

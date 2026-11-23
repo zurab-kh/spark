@@ -315,7 +315,8 @@ public sealed class DownloadManagerTests : IAsyncLifetime
 
     // ---- helpers ------------------------------------------------------------------------------------------
 
-    private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder };
+    // Fixed 16 connections: these tests depend on the connection count (auto mode has its own tests).
+    private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder, ConnectionsPerFile = 16 };
 
     private async Task<DownloadManager> NewManager(EngineOptions options)
     {

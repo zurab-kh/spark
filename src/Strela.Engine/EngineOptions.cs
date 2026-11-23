@@ -4,7 +4,10 @@ public sealed record EngineOptions
 {
     public required string DownloadFolder { get; init; }
     public required string StateFolder { get; init; }
-    public int ConnectionsPerFile { get; init; } = 16;
+    /// <summary>Connections per file: 1..32 fixed, 0 = auto (start with 8, grow by 4 while it pays off, up to 32).</summary>
+    public int ConnectionsPerFile { get; init; } = 0;
+    /// <summary>Auto mode: how often throughput is measured and connections may be added.</summary>
+    public TimeSpan AutoTuneInterval { get; init; } = TimeSpan.FromSeconds(3);
     public int MaxActiveDownloads { get; init; } = 3;
     public long MinSegmentBytes { get; init; } = 1 << 20;
     public int BufferBytes { get; init; } = 512 * 1024;

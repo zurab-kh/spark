@@ -13,7 +13,7 @@ public sealed class SettingsStoreTests : IDisposable
     public void Settings_MissingFile_Defaults()
     {
         var s = new SettingsStore(Path.Combine(_dir, "settings.json")).Load();
-        Assert.Equal(16, s.ConnectionsPerFile);
+        Assert.Equal(0, s.ConnectionsPerFile);   // auto
         Assert.Equal(3, s.MaxActiveDownloads);
         Assert.True(s.WatchClipboard);
     }
@@ -30,6 +30,20 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.True(s.StartWithWindows);
         Assert.False(s.Notifications);
     }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(-5, 0)]
+    [InlineData(1, 1)]
+    [InlineData(16, 16)]
+    [InlineData(32, 32)]
+    [InlineData(33, 32)]
+    public void Clamped_Connections_ZeroIsAuto(int saved, int expected) =>
+        Assert.Equal(expected, new AppSettings { ConnectionsPerFile = saved }.Clamped().ConnectionsPerFile);
+
+    [Fact]
+    public void ToEngineOptions_DefaultIsAuto() =>
+        Assert.Equal(0, new AppSettings().ToEngineOptions(Path.GetTempPath()).ConnectionsPerFile);
 
     [Fact]
     public void Settings_Corrupt_Defaults()
