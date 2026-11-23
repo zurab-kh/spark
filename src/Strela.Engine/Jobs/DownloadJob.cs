@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using Strela.Engine.Manager;
 using Strela.Engine.Policies;
@@ -11,14 +12,23 @@ namespace Strela.Engine.Jobs;
 /// Downloads one file over several connections: probe → part file → workers with work stealing →
 /// periodic state saves → rename to the final name. Cancelling <see cref="RunAsync"/> pauses the download.
 /// <para>
-/// Locking: <c>_segmentsLock</c> guards the segment list and segment ownership; steals (split + add) and the
-/// "all done" check happen under it, and so does the state snapshot, so a freshly stolen tail is never missed.
-/// The <see cref="JobStateSaver"/> serialises state saves with single-stream truncation. Order: saver → _segmentsLock → Segment.
+/// Resilience: failed requests are retried with backoff, throttled connections leave (lowering the host's
+/// ceiling), slow connections are reopened, a server that ignores Range sends the job back to one stream from 0,
+/// a changed file restarts from 0, and only fatal answers or <see cref="EngineOptions.GiveUpAfter"/> without a
+/// single committed byte end in Error.
+/// </para>
+/// <para>
+/// Locking: <c>_segmentsLock</c> guards the segment list, segment ownership and the live-worker count; steals
+/// (split + add) and the "all done" check happen under it, and so does the state snapshot, so a freshly stolen
+/// tail is never missed. The <see cref="JobStateSaver"/> serialises state saves with single-stream truncation.
+/// Order: saver → _segmentsLock → Segment.
 /// </para>
 /// </summary>
 internal sealed class DownloadJob
 {
     private const string DiskFullText = "Нет места на диске";
+    private const string StaleLinkText = "Ссылка устарела — обновите ссылку";
+    private static readonly TimeSpan SpeedWindow = TimeSpan.FromSeconds(3);
 
     private readonly HttpClient _http;
     private readonly HostLimits _limits;
@@ -29,14 +39,18 @@ internal sealed class DownloadJob
     private readonly object _segmentsLock = new();
     private readonly List<Segment> _segments = [];
     private readonly HashSet<Segment> _owned = [];
+    private readonly List<long> _retryDeadlines = [];   // TickCount64 of every pending retry; guarded by itself
 
     private PartFile? _part;
-    private CancellationTokenSource? _stop;
+    private CancellationTokenSource? _stop;   // the current worker phase
     private JobOutcome? _failure;
     private long _downloaded;
+    private long _failingSinceMs = -1;        // first failure since the last committed byte; -1 = none
     private int _activeConnections;
-    private bool _segmentsLoaded;   // guarded by _segmentsLock; false until Prepare filled _segments
-    private volatile string? _statusText;
+    private int _receiving;                   // connections receiving a body right now
+    private int _rangesIgnored;               // 1 = a ranged request got the whole file: rerun as single-stream
+    private int _liveWorkers;                 // guarded by _segmentsLock
+    private bool _segmentsLoaded;             // guarded by _segmentsLock; false until Prepare filled _segments
 
     public DownloadJob(DownloadState state, EngineOptions options, HttpClient http, HostLimits limits,
                        StateStore store, IStrelaLog log, Func<string, bool> isPathTaken)
@@ -57,8 +71,20 @@ internal sealed class DownloadJob
 
     public int ActiveConnections => Volatile.Read(ref _activeConnections);
 
-    /// <summary>What the job is waiting for, e.g. "Повтор через 8 с"; null while it simply downloads.</summary>
-    public string? StatusText => _statusText;
+    /// <summary>"Повтор через N с" (the soonest pending retry) while any connection waits to retry; null otherwise.</summary>
+    public string? StatusText
+    {
+        get
+        {
+            lock (_retryDeadlines)
+            {
+                if (_retryDeadlines.Count == 0)
+                    return null;
+                var ms = _retryDeadlines.Min() - Environment.TickCount64;
+                return $"Повтор через {Math.Max(1, (int)Math.Ceiling(ms / 1000.0))} с";
+            }
+        }
+    }
 
     internal EngineOptions Options { get; }
     internal HttpClient Http => _http;
@@ -71,20 +97,19 @@ internal sealed class DownloadJob
     {
         State.Status = DownloadStatus.Downloading;
         State.Error = null;
-        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _stop = stop;
         _failure = null;
+        Interlocked.Exchange(ref _failingSinceMs, -1);
+        Interlocked.Exchange(ref _rangesIgnored, 0);
         lock (_segmentsLock)
             _segmentsLoaded = false;
         try
         {
-            var probe = await ProbeAsync(stop.Token);
-            Prepare(probe);
-            OpenPartFile();
-            var outcome = await TransferAsync(stop, ct);
-            return outcome.Status == DownloadStatus.Completed ? outcome : End(outcome);
+            var probe = await ProbeAsync(ct);
+            var restart = Prepare(probe);
+            OpenPartFile(restart);
+            return End(await TransferAsync(ct));
         }
-        catch (JobFailedException ex)
+        catch (JobFailedException ex) when (!PausedOver(ex.Outcome, ct))
         {
             _log.Error($"{State.FileName ?? State.CurrentUrl}: {ex.Outcome.Error}", ex.InnerException);
             return End(ex.Outcome);
@@ -103,7 +128,6 @@ internal sealed class DownloadJob
         {
             _part?.Dispose();
             _part = null;
-            _stop = null;
         }
     }
 
@@ -139,7 +163,8 @@ internal sealed class DownloadJob
         }
     }
 
-    private void Prepare(ProbeResult probe)
+    /// <summary>Fills the live segments from the probe and the saved state. Returns true when the part file must start empty.</summary>
+    private bool Prepare(ProbeResult probe)
     {
         State.CurrentUrl = probe.FinalUri.ToString();
         if (string.IsNullOrEmpty(State.Folder))
@@ -150,21 +175,29 @@ internal sealed class DownloadJob
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new JobFailedException(new JobOutcome(DownloadStatus.Error, $"Папка недоступна: {ex.Message}"), ex);
+            throw FolderFailure(ex);
         }
 
-        var isNew = State.TotalBytes is null && State.Segments.Count == 0;
-        if (isNew)
+        var restart = false;
+        if (State.TotalBytes is null && State.Segments.Count == 0)
         {
-            State.TotalBytes = probe.TotalBytes;
-            State.SupportsRanges = probe.SupportsRanges;
-            State.ETag = probe.ETag;
-            State.LastModified = probe.LastModified;
+            Adopt(probe);
             var final = FileNameResolver.ReserveUniquePath(State.Folder, probe.FileName, IsTakenByOthers);
             State.FileName = Path.GetFileName(final);
             State.PartPath = final + ".strela";
         }
-        // Task 10: on resume compare ETag / Last-Modified / size with the probe ("restart: file changed").
+        else if (FileChanged(probe))
+        {
+            _log.Warn($"restart: file changed: {State.FileName} (size {State.TotalBytes} → {probe.TotalBytes}, " +
+                      $"ETag {State.ETag} → {probe.ETag}, Last-Modified {State.LastModified:R} → {probe.LastModified:R})");
+            Adopt(probe);
+            State.Segments = [];   // the new file's metadata is never saved next to the old file's progress
+            restart = true;
+        }
+        else if (!probe.SupportsRanges)
+        {
+            State.SupportsRanges = false;
+        }
 
         Uri = probe.FinalUri;
         Request = State.ToRequest();
@@ -177,7 +210,7 @@ internal sealed class DownloadJob
             segments.Add(new Segment(0, State.TotalBytes ?? long.MaxValue, 0));
             _log.Info($"single-stream: {State.FileName} (ranges: {State.SupportsRanges}, size: {State.TotalBytes?.ToString() ?? "unknown"})");
         }
-        else if (State.Segments.Count > 0 && File.Exists(State.PartPath))
+        else if (State.Segments.Count > 0 && File.Exists(State.PartPath) && Tiles(State.Segments, State.TotalBytes!.Value))
         {
             foreach (var s in State.Segments)
                 segments.Add(new Segment(s.Start, s.End, s.Position));
@@ -185,7 +218,11 @@ internal sealed class DownloadJob
         else
         {
             if (State.Segments.Count > 0)
-                _log.Warn($"{State.FileName}: part file is missing, starting over");
+            {
+                _log.Warn(File.Exists(State.PartPath)
+                    ? $"{State.FileName}: saved segments do not cover the file, downloading it again"
+                    : $"{State.FileName}: part file is missing, starting over");
+            }
             segments = SegmentPlanner.InitialSplit(State.TotalBytes!.Value, ConnectionCeiling(), Options.MinSegmentBytes);
         }
 
@@ -200,50 +237,94 @@ internal sealed class DownloadJob
             Interlocked.Exchange(ref _downloaded, downloaded);
             _segmentsLoaded = true;
         }
+
+        return restart;
     }
 
-    private void OpenPartFile()
+    private void Adopt(ProbeResult probe)
+    {
+        State.TotalBytes = probe.TotalBytes;
+        State.SupportsRanges = probe.SupportsRanges;
+        State.ETag = probe.ETag;
+        State.LastModified = probe.LastModified;
+    }
+
+    /// <summary>Size differs, or the ETag (when both are known; otherwise Last-Modified) differs.</summary>
+    private bool FileChanged(ProbeResult probe)
+    {
+        if (probe.TotalBytes != State.TotalBytes)
+            return true;
+        if (probe.ETag is not null && State.ETag is not null)
+            return probe.ETag != State.ETag;
+        if (probe.LastModified is { } now && State.LastModified is { } then)
+            return now != then;
+        return false;
+    }
+
+    /// <summary>Saved segments cover [0, total) exactly, each with Start ≤ Position ≤ End.</summary>
+    private static bool Tiles(List<SegmentState> saved, long total)
+    {
+        long cursor = 0;
+        foreach (var s in saved.OrderBy(s => s.Start))
+        {
+            if (s.Start != cursor || s.Position < s.Start || s.Position > s.End)
+                return false;
+            cursor = s.End;
+        }
+        return cursor == total;
+    }
+
+    private void OpenPartFile(bool restart)
     {
         try
         {
+            if (restart)
+                PartFile.Delete(State.PartPath!);   // nothing of the old file may survive
             _part = PartFile.OpenOrCreate(State.PartPath!, SingleStream ? null : State.TotalBytes);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or DirectoryNotFoundException)
+        {
+            throw FolderFailure(ex);
         }
         catch (IOException ex)
         {
             throw LocalFailure(ex);
         }
-        catch (UnauthorizedAccessException ex)
-        {
-            throw new JobFailedException(new JobOutcome(DownloadStatus.Error, $"Нет доступа к файлу: {ex.Message}"), ex);
-        }
     }
 
     private int ConnectionCeiling() => Math.Max(1, _limits.Ceiling(Uri.Host, Options.ConnectionsPerFile));
 
+    /// <summary>A pause that raced with an error wins: pausing never ends a download in Error.</summary>
+    private static bool PausedOver(JobOutcome outcome, CancellationToken ct) =>
+        ct.IsCancellationRequested && outcome.Status == DownloadStatus.Error;
+
     // ---- transfer -----------------------------------------------------------------------------------------
 
-    private async Task<JobOutcome> TransferAsync(CancellationTokenSource stop, CancellationToken ct)
+    private async Task<JobOutcome> TransferAsync(CancellationToken ct)
     {
-        int workerCount;
-        lock (_segmentsLock)
-            workerCount = SingleStream ? 1 : Math.Max(1, Math.Min(ConnectionCeiling(), _segments.Count));
-        _log.Info($"start {State.FileName}: {workerCount} connection(s), {State.TotalBytes?.ToString() ?? "?"} bytes");
-
         using var saverStop = new CancellationTokenSource();
         var saver = _saver.RunAsync(Options.StateSaveInterval, saverStop.Token);
-
-        var workers = new Task[workerCount];
-        for (var i = 0; i < workerCount; i++)
+        try
         {
-            var worker = new SegmentWorker(this, i, stop.Token);
-            workers[i] = Task.Run(worker.RunAsync, CancellationToken.None);
+            while (true)
+            {
+                await RunWorkersAsync(ct);
+                if (Volatile.Read(ref _failure) is not null || ct.IsCancellationRequested
+                    || Interlocked.Exchange(ref _rangesIgnored, 0) == 0)
+                    break;
+
+                // A ranged request got the whole file: everything again over one stream from byte 0.
+                State.SupportsRanges = false;
+                SingleStream = true;
+            }
+        }
+        finally
+        {
+            saverStop.Cancel();
+            await saver;
         }
 
-        await Task.WhenAll(workers);   // workers never throw
-        saverStop.Cancel();
-        await saver;
-
-        if (Volatile.Read(ref _failure) is { } failure)
+        if (Volatile.Read(ref _failure) is { } failure && !PausedOver(failure, ct))
             return failure;
         if (AllDone())
             return Complete();
@@ -254,9 +335,82 @@ internal sealed class DownloadJob
         return new JobOutcome(DownloadStatus.Error, "Внутренняя ошибка: загрузка остановилась");
     }
 
+    /// <summary>One phase: workers plus the slow-connection watch, until every worker has ended.</summary>
+    private async Task RunWorkersAsync(CancellationToken ct)
+    {
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        int count;
+        lock (_segmentsLock)
+        {
+            count = SingleStream ? 1 : Math.Max(1, Math.Min(ConnectionCeiling(), _segments.Count));
+            _liveWorkers = count;
+        }
+        _log.Info($"start {State.FileName}: {count} connection(s), {State.TotalBytes?.ToString() ?? "?"} bytes");
+
+        var workers = new SegmentWorker[count];
+        for (var i = 0; i < count; i++)
+            workers[i] = new SegmentWorker(this, i, stop.Token);
+        _stop = stop;
+
+        using var watchStop = new CancellationTokenSource();
+        var watch = WatchSlowAsync(workers, watchStop.Token);
+        try
+        {
+            await Task.WhenAll(workers.Select(w => Task.Run(w.RunAsync, CancellationToken.None)));   // never throw
+        }
+        finally
+        {
+            watchStop.Cancel();
+            await watch;
+            _stop = null;
+        }
+    }
+
+    /// <summary>
+    /// Every SlowCheckInterval: each open connection's speed and remaining bytes go to the
+    /// <see cref="SlowConnectionMonitor"/>; flagged connections are reopened from their segment's Position.
+    /// </summary>
+    private async Task WatchSlowAsync(SegmentWorker[] workers, CancellationToken token)
+    {
+        if (workers.Length < 2)
+            return;
+        var monitor = new SlowConnectionMonitor(Options.SlowThreshold, Options.SlowGrace, 2 * Options.MinSegmentBytes);
+        var meters = workers.Select(_ => new SpeedMeter(SpeedWindow)).ToArray();
+        var samples = new List<WorkerSample>(workers.Length);
+        var clock = Stopwatch.StartNew();
+        using var timer = new PeriodicTimer(Options.SlowCheckInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                var now = clock.Elapsed;
+                samples.Clear();
+                foreach (var w in workers)
+                {
+                    meters[w.Id].Sample(w.ReceivedBytes, now);
+                    if (w.OpenRequestRemaining is { } remaining)
+                        samples.Add(new WorkerSample(w.Id, meters[w.Id].BytesPerSecond, remaining));
+                }
+
+                foreach (var id in monitor.Evaluate(samples, now))
+                {
+                    var speed = meters[id].BytesPerSecond;
+                    if (!workers[id].ReplaceConnection())
+                        continue;
+                    _log.Info($"replace slow: {State.FileName} connection {id} at {speed / 1024:0} KB/s");
+                    meters[id] = new SpeedMeter(SpeedWindow);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
     /// <summary>
     /// Next segment for a worker that finished <paramref name="finished"/> (or is just starting): an unfinished
-    /// segment nobody owns, else a tail stolen from the segment with the most unreserved bytes; null = no work.
+    /// segment nobody owns, else a tail stolen from the segment with the most unreserved bytes; null = no work,
+    /// and the worker ends.
     /// </summary>
     internal Segment? TakeWork(Segment? finished)
     {
@@ -275,7 +429,10 @@ internal sealed class DownloadJob
             // Split and add under the same lock as AllDone and the state snapshot.
             var tail = SegmentPlanner.Steal(_segments, Options.MinSegmentBytes);
             if (tail is null)
+            {
+                _liveWorkers--;
                 return null;
+            }
             _segments.Add(tail);
             _owned.Add(tail);
             stolen = tail;
@@ -283,6 +440,40 @@ internal sealed class DownloadJob
 
         _log.Info($"split: [{stolen.Start}, {stolen.End})");
         return stolen;
+    }
+
+    /// <summary>
+    /// A worker got 429/503 for <paramref name="segment"/>: unless it is the last live worker it leaves, its segment
+    /// goes back to the pool for the others (who pick it up in <see cref="TakeWork"/> before they can end), and the
+    /// host's ceiling drops to the connections receiving data right now. False = stay and back off.
+    /// </summary>
+    internal bool TryLeaveThrottled(int workerId, Segment segment)
+    {
+        lock (_segmentsLock)
+        {
+            if (_liveWorkers <= 1)
+                return false;
+            _liveWorkers--;
+            _owned.Remove(segment);
+        }
+
+        var working = Volatile.Read(ref _receiving);
+        _limits.Lower(Uri.Host, working);
+        _log.Warn($"throttle: {State.FileName}: connection {workerId} leaves, {working} receiving, " +
+                  $"ceiling for {Uri.Host}: {_limits.Ceiling(Uri.Host, Options.ConnectionsPerFile)}");
+        return true;
+    }
+
+    /// <summary>
+    /// The server answered a ranged request at <paramref name="offset"/> &gt; 0 with the whole file (200): nothing of it
+    /// is written; all workers stop and the job reruns as one stream from byte 0.
+    /// </summary>
+    internal void RangesIgnored(long offset)
+    {
+        if (Interlocked.Exchange(ref _rangesIgnored, 1) == 1)
+            return;
+        _log.Warn($"single-stream: {State.FileName}: server ignored Range at offset {offset}, restarting from 0");
+        _stop?.Cancel();
     }
 
     /// <summary>Single-stream (re)start: empty part file, one segment from 0, zero progress.</summary>
@@ -304,6 +495,7 @@ internal sealed class DownloadJob
             {
                 _segments.Clear();
                 _segments.Add(segment);
+                _owned.Clear();
                 Interlocked.Exchange(ref _downloaded, 0);
             }
         });
@@ -334,11 +526,21 @@ internal sealed class DownloadJob
         }
     }
 
-    internal void AddDownloaded(int n) => Interlocked.Add(ref _downloaded, n);
+    /// <summary>Committed bytes; any progress ends the job-wide failure streak.</summary>
+    internal void AddDownloaded(int n)
+    {
+        Interlocked.Add(ref _downloaded, n);
+        if (Volatile.Read(ref _failingSinceMs) >= 0)
+            Interlocked.Exchange(ref _failingSinceMs, -1);
+    }
 
     internal void ConnectionOpened() => Interlocked.Increment(ref _activeConnections);
 
     internal void ConnectionClosed() => Interlocked.Decrement(ref _activeConnections);
+
+    internal void ResponseStarted() => Interlocked.Increment(ref _receiving);
+
+    internal void ResponseEnded() => Interlocked.Decrement(ref _receiving);
 
     /// <summary>Ends the job with <paramref name="outcome"/> (first failure wins) and stops all workers.</summary>
     internal void Fail(JobOutcome outcome, Exception ex)
@@ -350,33 +552,59 @@ internal sealed class DownloadJob
     }
 
     /// <summary>
-    /// Handles one failed request: fatal answers and failure streaks longer than GiveUpAfter end the job
-    /// (<see cref="JobFailedException"/>); otherwise waits the backoff delay. Callers check their own
+    /// Handles one failed request: a fatal answer, or <see cref="EngineOptions.GiveUpAfter"/> without a committed
+    /// byte anywhere in the job, ends the job (<see cref="JobFailedException"/>); otherwise waits the backoff delay
+    /// (never past the give-up deadline, so the last attempt happens right at it). Callers check their own
     /// cancellation before calling, so a pause never gets classified.
     /// </summary>
     internal async Task BackOffAsync(RetryStreak streak, Exception error, CancellationToken token)
     {
-        HttpStatusCode? status = error is HttpStatusException h ? h.Status : null;
-        var message = status is { } s ? $"Ошибка сервера: {(int)s}" : $"Ошибка загрузки: {error.Message}";
-        if (RetryPolicy.Classify(status, status is null ? error : null) == ErrorKind.Fatal)
-            throw new JobFailedException(new JobOutcome(DownloadStatus.Error, message), error);
+        var http = error as HttpStatusException;
+        if (RetryPolicy.Classify(http?.Status, http is null ? error : null) == ErrorKind.Fatal)
+            throw new JobFailedException(new JobOutcome(DownloadStatus.Error, FatalText(http?.Status, error)), error);
 
-        var failingFor = streak.Register();
-        if (failingFor > Options.GiveUpAfter)
-            throw new JobFailedException(new JobOutcome(DownloadStatus.Error, message), error);
+        var failingFor = FailingFor();
+        if (failingFor >= Options.GiveUpAfter)
+            throw new JobFailedException(new JobOutcome(DownloadStatus.Error, $"Сервер недоступен: {error.Message}"), error);
 
-        var delay = RetryPolicy.Delay(streak.Attempt, (error as HttpStatusException)?.RetryAfter);
+        var delay = RetryPolicy.Delay(streak.Next(), http?.RetryAfter);
+        var left = Options.GiveUpAfter - failingFor;
+        if (delay > left)
+            delay = left;
         _log.Warn($"{State.FileName ?? State.CurrentUrl}: {error.Message}; retry in {delay.TotalSeconds:0.#} s");
-        _statusText = $"Повтор через {Math.Max(1, (int)Math.Ceiling(delay.TotalSeconds))} с";
+
+        var due = Environment.TickCount64 + (long)delay.TotalMilliseconds;
+        lock (_retryDeadlines)
+            _retryDeadlines.Add(due);
         try
         {
             await Task.Delay(delay, token);
         }
         finally
         {
-            _statusText = null;
+            lock (_retryDeadlines)
+                _retryDeadlines.Remove(due);
         }
     }
+
+    /// <summary>How long the job has gone without a committed byte since its first failure (starts the clock).</summary>
+    private TimeSpan FailingFor()
+    {
+        var now = Environment.TickCount64;
+        var since = Interlocked.CompareExchange(ref _failingSinceMs, now, -1);
+        return TimeSpan.FromMilliseconds(since < 0 ? 0 : now - since);
+    }
+
+    private string FatalText(HttpStatusCode? status, Exception error) => (int?)status switch
+    {
+        404 or 410 => $"Файл не найден на сервере ({(int)status!.Value})",
+        403 => HasProgress() ? StaleLinkText : "Доступ запрещён (403)",
+        { } code => $"Ошибка сервера: {code}",
+        null => $"Ошибка загрузки: {error.Message}",
+    };
+
+    /// <summary>Something of this download is already on disk (this run, an earlier run, or the saved state).</summary>
+    private bool HasProgress() => DownloadedBytes > 0 || State.Segments.Exists(s => s.Position > s.Start);
 
     // ---- state --------------------------------------------------------------------------------------------
 
@@ -413,6 +641,7 @@ internal sealed class DownloadJob
         }
     }
 
+    /// <summary>Renames the part file to the final name. The outcome is saved once, by <see cref="RunAsync"/>.</summary>
     private JobOutcome Complete()
     {
         var part = _part!;
@@ -424,18 +653,19 @@ internal sealed class DownloadJob
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            part.Dispose();
             _log.Error($"{State.FileName}: cannot finish the file", ex);
-            return End(new JobOutcome(DownloadStatus.Error, $"Не удалось сохранить файл: {ex.Message}"));
+            return new JobOutcome(DownloadStatus.Error, $"Не удалось сохранить файл: {ex.Message}");
+        }
+        finally
+        {
+            part.Dispose();   // no-op after a successful Complete
         }
 
         State.FinalPath = final;
         State.FileName = Path.GetFileName(final);
         State.CompletedAt = DateTimeOffset.UtcNow;
-        var outcome = new JobOutcome(DownloadStatus.Completed, null, final);
-        End(outcome);
         _log.Info($"done {State.FileName}: {DownloadedBytes} bytes");
-        return outcome;
+        return new JobOutcome(DownloadStatus.Completed, null, final);
     }
 
     /// <summary>Final save with the outcome's status (data flushed first while the part file is open).</summary>
@@ -444,6 +674,9 @@ internal sealed class DownloadJob
         _saver.Save(outcome.Status, outcome.Error);
         return outcome;
     }
+
+    private JobFailedException FolderFailure(Exception ex) =>
+        new(new JobOutcome(DownloadStatus.Error, $"Нет доступа к папке: {State.Folder}"), ex);
 
     private static JobFailedException LocalFailure(IOException ex) => ex is DiskFullException
         ? new JobFailedException(new JobOutcome(DownloadStatus.Paused, DiskFullText), ex)

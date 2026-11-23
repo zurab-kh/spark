@@ -1,25 +1,15 @@
 namespace Strela.Engine.Jobs;
 
-/// <summary>A run of consecutive failures of one connection (or of the probe): attempt number and since when.</summary>
+/// <summary>
+/// Consecutive failures of one connection (or of the probe): the attempt number that picks the backoff delay.
+/// How long the whole job has been failing is tracked by the job itself, across all connections.
+/// </summary>
 internal sealed class RetryStreak
 {
-    private long _sinceMs = -1;
-
     public int Attempt { get; private set; }
 
-    public void Reset()
-    {
-        Attempt = 0;
-        _sinceMs = -1;
-    }
+    public void Reset() => Attempt = 0;
 
-    /// <summary>Counts one more failure; returns how long the streak has lasted.</summary>
-    public TimeSpan Register()
-    {
-        var now = Environment.TickCount64;
-        if (_sinceMs < 0)
-            _sinceMs = now;
-        Attempt++;
-        return TimeSpan.FromMilliseconds(now - _sinceMs);
-    }
+    /// <summary>Counts one more failure; returns its attempt number (1-based).</summary>
+    public int Next() => ++Attempt;
 }

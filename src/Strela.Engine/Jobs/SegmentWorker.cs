@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Net;
 using Strela.Engine.Http;
 using Strela.Engine.Manager;
+using Strela.Engine.Policies;
 using Strela.Engine.Segments;
 
 namespace Strela.Engine.Jobs;
@@ -9,15 +10,33 @@ namespace Strela.Engine.Jobs;
 /// <summary>
 /// One connection of a <see cref="DownloadJob"/>. Owns one segment at a time: GET Range from its Position,
 /// read into a pooled buffer, Reserve → write → Commit; when the segment is done it asks the job for more work
-/// (an unowned segment or a stolen tail) and continues over a new request. Never throws out of <see cref="RunAsync"/>:
-/// a fatal problem is handed to <see cref="DownloadJob.Fail"/>, cancellation just ends the worker.
+/// (an unowned segment or a stolen tail) and continues over a new request. A failed request is abandoned and
+/// retried after the job's backoff; on 429/503 the worker leaves (unless it is the last one). Never throws out of
+/// <see cref="RunAsync"/>: a fatal problem is handed to <see cref="DownloadJob.Fail"/>, cancellation just ends the worker.
 /// </summary>
 internal sealed class SegmentWorker
 {
+    private enum FetchEnd
+    {
+        /// <summary>The segment has no room left (complete, or cut short by a steal).</summary>
+        SegmentFull,
+        /// <summary>The response body ended.</summary>
+        BodyEnded,
+        /// <summary>The job aborted this slow request; reopen it.</summary>
+        Replaced,
+        /// <summary>200 with the whole file for a range at a non-zero offset; nothing was written.</summary>
+        RangeIgnored,
+    }
+
     private readonly DownloadJob _job;
     private readonly CancellationToken _token;
     private readonly RetryStreak _streak = new();
+    private readonly object _gate = new();
+    private CancellationTokenSource? _request;   // guarded by _gate: the open ranged request
+    private Segment? _requestSegment;            // guarded by _gate
+    private bool _replacing;                     // guarded by _gate: _request was cancelled by ReplaceConnection
     private long _written;
+    private long _received;
 
     public SegmentWorker(DownloadJob job, int id, CancellationToken token)
     {
@@ -27,6 +46,28 @@ internal sealed class SegmentWorker
     }
 
     public int Id { get; }
+
+    /// <summary>Body bytes read from the network so far (written or not); for speed measurement.</summary>
+    public long ReceivedBytes => Interlocked.Read(ref _received);
+
+    /// <summary>Bytes left in the segment of the open ranged request; null while no such request is open.</summary>
+    public long? OpenRequestRemaining
+    {
+        get { lock (_gate) return _requestSegment?.Remaining; }
+    }
+
+    /// <summary>Aborts the open ranged request; the worker reopens it from the segment's Position on a new connection.</summary>
+    public bool ReplaceConnection()
+    {
+        lock (_gate)   // held while cancelling, so the request's CTS cannot be disposed meanwhile
+        {
+            if (_request is null)
+                return false;
+            _replacing = true;
+            _request.Cancel();
+            return true;
+        }
+    }
 
     public async Task RunAsync()
     {
@@ -66,15 +107,22 @@ internal sealed class SegmentWorker
                 var before = _written;
                 try
                 {
-                    // false = the segment is complete (possibly cut short by a steal); true = the response ended.
-                    if (await FetchRangeAsync(segment, buffer) && !segment.IsDone)
+                    var end = await FetchRangeAsync(segment, buffer);
+                    if (end == FetchEnd.RangeIgnored)
+                    {
+                        _job.RangesIgnored(segment.Position);
+                        return;
+                    }
+                    if (end == FetchEnd.BodyEnded && !segment.IsDone)
                         throw new IOException("Сервер закрыл соединение раньше времени");
-                    _streak.Reset();
+                    _streak.Reset();   // full, or replaced (slow but alive): reopen at once
                 }
                 catch (Exception ex) when (!_token.IsCancellationRequested && ex is not JobFailedException)
                 {
                     if (_written > before)
                         _streak.Reset();
+                    if (IsThrottle(ex) && _job.TryLeaveThrottled(Id, segment))
+                        return;   // the segment went back to the pool
                     await _job.BackOffAsync(_streak, ex, _token);
                 }
             }
@@ -100,43 +148,67 @@ internal sealed class SegmentWorker
             {
                 if (_written > before)
                     _streak.Reset();
-                await _job.BackOffAsync(_streak, ex, _token);
+                await _job.BackOffAsync(_streak, ex, _token);   // the only worker: throttling just waits
             }
         }
     }
 
-    /// <summary>One ranged request for [Position, End). Returns true when the response body ended before the segment did.</summary>
-    private async Task<bool> FetchRangeAsync(Segment segment, byte[] buffer)
+    /// <summary>One ranged request for [Position, End).</summary>
+    private async Task<FetchEnd> FetchRangeAsync(Segment segment, byte[] buffer)
     {
         var from = segment.Position;
-        using var stall = CancellationTokenSource.CreateLinkedTokenSource(_token);
-        stall.CancelAfter(_job.Options.StallTimeout);
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(_token);
+        request.CancelAfter(_job.Options.StallTimeout);
+        lock (_gate)
+        {
+            _request = request;
+            _requestSegment = segment;
+            _replacing = false;
+        }
         _job.ConnectionOpened();
+        var receiving = false;
         try
         {
-            using var request = StrelaHttp.NewRequest(_job.Request, _job.Uri, from, segment.End - 1);
-            using var response = await _job.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, stall.Token);
+            using var message = StrelaHttp.NewRequest(_job.Request, _job.Uri, from, segment.End - 1);
+            using var response = await _job.Http.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, request.Token);
 
-            if (response.StatusCode != HttpStatusCode.PartialContent)
+            if ((int)response.StatusCode >= 400)
+                throw HttpStatusException.From(response);
+            if (response.StatusCode == HttpStatusCode.PartialContent)
             {
-                if ((int)response.StatusCode >= 400)
-                    throw HttpStatusException.From(response);
-                // Task 10: 200 on a range request → fall back to single-stream from scratch.
-                throw new JobFailedException(new JobOutcome(DownloadStatus.Error, "Сервер перестал поддерживать докачку"));
+                if (response.Content.Headers.ContentRange?.From != from)
+                    throw new JobFailedException(new JobOutcome(DownloadStatus.Error, "Сервер прислал не тот кусок файла"));
             }
+            else if (response.StatusCode != HttpStatusCode.OK)
+            {
+                throw HttpStatusException.From(response);
+            }
+            else if (from > 0)
+            {
+                return FetchEnd.RangeIgnored;   // the body starts at byte 0, not at `from`
+            }
+            // 200 for a range from 0: the body is the file from byte 0, so it is exactly what the segment needs.
 
-            if (response.Content.Headers.ContentRange?.From != from)
-                throw new JobFailedException(new JobOutcome(DownloadStatus.Error, "Сервер прислал не тот кусок файла"));
-
-            await using var body = await response.Content.ReadAsStreamAsync(stall.Token);
-            return await CopyAsync(body, segment, buffer, stall);
+            _job.ResponseStarted();
+            receiving = true;
+            await using var body = await response.Content.ReadAsStreamAsync(request.Token);
+            return await CopyAsync(body, segment, buffer, request) ? FetchEnd.BodyEnded : FetchEnd.SegmentFull;
         }
-        catch (OperationCanceledException ex) when (stall.IsCancellationRequested && !_token.IsCancellationRequested)
+        catch (Exception ex) when (ex is not JobFailedException && request.IsCancellationRequested && !_token.IsCancellationRequested)
         {
+            if (TakeReplacing())
+                return FetchEnd.Replaced;
             throw new TimeoutException("Сервер не присылает данные", ex);
         }
         finally
         {
+            lock (_gate)
+            {
+                _request = null;
+                _requestSegment = null;
+            }
+            if (receiving)
+                _job.ResponseEnded();
             segment.Abandon();   // reserved-but-uncommitted bytes go back; a no-op after a clean finish
             _job.ConnectionClosed();
         }
@@ -204,6 +276,7 @@ internal sealed class SegmentWorker
                     break;
                 }
                 filled += read;
+                Interlocked.Add(ref _received, read);
             }
 
             if (filled > 0)                       // never Reserve(0): Count 0 is the "segment end" sentinel
@@ -225,4 +298,17 @@ internal sealed class SegmentWorker
                 return true;
         }
     }
+
+    private bool TakeReplacing()
+    {
+        lock (_gate)
+        {
+            var replacing = _replacing;
+            _replacing = false;
+            return replacing;
+        }
+    }
+
+    private static bool IsThrottle(Exception ex) =>
+        ex is HttpStatusException h && RetryPolicy.Classify(h.Status, null) == ErrorKind.Throttle;
 }
