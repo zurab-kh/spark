@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace Strela.Engine;
 
 public sealed record EngineOptions
@@ -17,4 +19,25 @@ public sealed record EngineOptions
     public TimeSpan SlowGrace { get; init; } = TimeSpan.FromSeconds(6);
     public TimeSpan StallTimeout { get; init; } = TimeSpan.FromSeconds(30);   // нет байтов → соединение мёртвое
     public TimeSpan GiveUpAfter { get; init; } = TimeSpan.FromMinutes(2);
+
+    // ---- torrents (read when the shared torrent engine starts: the first torrent of the session) ----
+
+    /// <summary>TCP/UDP port for incoming peers and DHT. Busy → a random free port.</summary>
+    public int TorrentPort { get; init; } = 51413;
+    public int TorrentMaxConnectionsPerTorrent { get; init; } = 200;
+    public bool TorrentDht { get; init; } = true;
+    public bool TorrentLocalPeerDiscovery { get; init; } = true;
+    /// <summary>UPnP / NAT-PMP port mapping.</summary>
+    public bool TorrentPortForwarding { get; init; } = true;
+    /// <summary>A magnet link that gets no metadata in this time ends in Error.</summary>
+    public TimeSpan TorrentMetadataTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+    /// <summary>Tests: listen on this address only (null = every interface, IPv4 and IPv6).</summary>
+    internal IPAddress? TorrentListenAddress { get; init; }
+    /// <summary>Tests: peers added by hand to every torrent (no trackers or DHT in a local swarm).</summary>
+    internal IReadOnlyList<IPEndPoint> TorrentExtraPeers { get; init; } = [];
+    /// <summary>Tests: upload limit of the whole torrent engine, bytes/s (0 = none).</summary>
+    internal int TorrentMaxUploadRate { get; init; }
+    /// <summary>Tests: download limit of the whole torrent engine, bytes/s (0 = none).</summary>
+    internal int TorrentMaxDownloadRate { get; init; }
 }

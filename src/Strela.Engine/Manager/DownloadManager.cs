@@ -1,16 +1,18 @@
 using System.Diagnostics;
 using System.Net.NetworkInformation;
+using MonoTorrent;
 using Strela.Engine.Http;
 using Strela.Engine.Jobs;
 using Strela.Engine.Policies;
 using Strela.Engine.Probe;
 using Strela.Engine.Storage;
+using Strela.Engine.Torrents;
 
 namespace Strela.Engine.Manager;
 
 /// <summary>
 /// The download queue: at most <see cref="EngineOptions.MaxActiveDownloads"/> jobs run at once, FIFO by QueueOrder.
-/// Each run is a <see cref="DownloadJob"/> on the thread pool with its own <see cref="CancellationTokenSource"/>;
+/// Each run is a <see cref="DownloadJob"/> (a <see cref="TorrentJob"/> for magnet links and .torrent files) on the thread pool with its own <see cref="CancellationTokenSource"/>;
 /// cancelling it pauses the job, which saves its own state.
 /// <para>
 /// Status: an entry's <c>Status</c> is what the user sees and wants. While a job is stopping, it already shows the
@@ -38,6 +40,7 @@ public sealed class DownloadManager : IDownloadManager
     private readonly bool _ownsHttp;
     private readonly StateStore _store;
     private readonly HostLimits _limits = new();
+    private readonly TorrentService _torrents;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private EngineOptions _options;
     private volatile bool _networkDown;
@@ -50,11 +53,22 @@ public sealed class DownloadManager : IDownloadManager
         _ownsHttp = http is null;
         _http = http ?? StrelaHttp.Create();
         _store = new StateStore(options.StateFolder);
+        _torrents = new TorrentService(options, log);
         _networkDown = !NetworkInterface.GetIsNetworkAvailable();
         NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
     }
 
     public event Action<DownloadSnapshot>? Completed;
+
+    /// <summary>The shared torrent engine (for tests).</summary>
+    internal TorrentService Torrents => _torrents;
+
+    /// <summary>The live state of a download (for tests: read only).</summary>
+    internal DownloadState? StateOf(Guid id)
+    {
+        lock (_lock)
+            return _byId.TryGetValue(id, out var e) ? e.State : null;
+    }
 
     public bool HasActiveWork
     {
@@ -104,6 +118,8 @@ public sealed class DownloadManager : IDownloadManager
     public Guid Add(DownloadRequest request)
     {
         var url = request.Url;
+        if (url.IsAbsoluteUri && TorrentLinks.IsTorrentRequest(request))
+            return AddTorrent(request);
         if (!url.IsAbsoluteUri || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
             throw new ArgumentException($"Not an http/https address: {url}", nameof(request));
 
@@ -143,6 +159,124 @@ public sealed class DownloadManager : IDownloadManager
         RequestSave(entry);
         Pump();
         return entry.State.Id;
+    }
+
+    /// <summary>
+    /// A magnet link, a local .torrent file (copied into the state folder, so the original may go away) or an
+    /// http(s) link to a .torrent. The same torrent (info-hash, or the same link) that is still in progress, or done
+    /// with its data still on disk, is not added again.
+    /// </summary>
+    private Guid AddTorrent(DownloadRequest request)
+    {
+        var url = request.Url;
+        var id = Guid.NewGuid();
+        string original;
+        string? magnet = null, infoHash = null, name = null, copy = null;
+        long? size = null;
+        if (url.Scheme.Equals("magnet", StringComparison.OrdinalIgnoreCase))
+        {
+            original = url.OriginalString.Trim();
+            if (!TorrentLinks.TryParseMagnet(original, out var link))
+                throw new ArgumentException($"Not a magnet link: {original}", nameof(request));
+            magnet = original;
+            infoHash = TorrentJob.Hex(link.InfoHashes);
+            name = string.IsNullOrWhiteSpace(link.Name) ? null : link.Name;
+        }
+        else if (url.IsFile)
+        {
+            original = url.LocalPath;
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(original);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                throw new ArgumentException($"Cannot read {original}: {ex.Message}", nameof(request), ex);
+            }
+            if (!Torrent.TryLoad(bytes, out var torrent))
+                throw new ArgumentException($"Not a .torrent file: {original}", nameof(request));
+            infoHash = TorrentJob.Hex(torrent.InfoHashes);
+            name = torrent.Name;
+            size = torrent.Size;
+            copy = _torrents.TorrentCopyPath(id);
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(copy)!);
+                File.WriteAllBytes(copy, bytes);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _log.Warn($"torrent: cannot copy {original}: {ex.Message}");
+                copy = null;   // the job reads the original
+            }
+        }
+        else
+        {
+            original = url.AbsoluteUri;
+        }
+
+        Entry entry;
+        lock (_lock)
+        {
+            var existing = _list.Find(e => e.State.Kind == DownloadKind.Torrent
+                && ((infoHash is not null && string.Equals(e.State.InfoHash, infoHash, StringComparison.OrdinalIgnoreCase))
+                    || e.State.OriginalUrl == original)
+                && (e.Status is DownloadStatus.Queued or DownloadStatus.Downloading or DownloadStatus.Paused
+                    || (e.Status == DownloadStatus.Completed && e.State.FinalPath is { } done && (File.Exists(done) || Directory.Exists(done)))));
+            if (existing is null)
+            {
+                var state = new DownloadState
+                {
+                    Id = id,
+                    Kind = DownloadKind.Torrent,
+                    OriginalUrl = original,
+                    CurrentUrl = original,
+                    Referer = request.Referer,
+                    Headers = request.Headers is null ? null : new Dictionary<string, string>(request.Headers),
+                    Cookies = request.Cookies,
+                    Magnet = magnet,
+                    InfoHash = infoHash,
+                    TorrentFilePath = copy,
+                    FileName = name,
+                    TotalBytes = size,
+                    Folder = _options.DownloadFolder,
+                    Status = DownloadStatus.Queued,
+                    QueueOrder = _list.Count == 0 ? 0 : _list[^1].State.QueueOrder + 1,
+                    AddedAt = DateTimeOffset.UtcNow,
+                };
+                entry = new Entry(state, DisplayName(state)) { Status = DownloadStatus.Queued };
+                _byId.Add(state.Id, entry);
+                _list.Add(entry);
+            }
+            else
+            {
+                entry = existing;
+            }
+        }
+
+        if (entry.State.Id != id)
+        {
+            if (copy is not null)
+                DeleteFile(copy);   // a duplicate: the existing download keeps its own copy
+            return entry.State.Id;
+        }
+
+        _log.Info($"add torrent {id}: {(magnet is not null ? "magnet " + infoHash : original)}");
+        RequestSave(entry);
+        Pump();
+        return id;
+    }
+
+    /// <summary>For a torrent job: is another (not failed) download in the list the same torrent?</summary>
+    private bool IsOtherTorrent(Entry self, string infoHash)
+    {
+        lock (_lock)
+        {
+            return _list.Exists(e => !ReferenceEquals(e, self) && e.State.Kind == DownloadKind.Torrent
+                && string.Equals(e.State.InfoHash, infoHash, StringComparison.OrdinalIgnoreCase)
+                && e.Status is not DownloadStatus.Error);
+        }
     }
 
     public void Pause(Guid id)
@@ -203,7 +337,15 @@ public sealed class DownloadManager : IDownloadManager
             lock (e.SaveLock)
             {
                 // No save is in flight and none will start (Removed).
-                if (deleteFile)
+                if (e.State.Kind == DownloadKind.Torrent)
+                {
+                    if (deleteFile)
+                        DeleteTorrentData(e.State);
+                    if (e.State.TorrentFilePath is { } copy && Same(Path.GetFullPath(copy), _torrents.TorrentCopyPath(id)))
+                        DeleteFile(copy);
+                    _torrents.Forget(e.State.InfoHash);
+                }
+                else if (deleteFile)
                 {
                     DeleteFile(e.State.PartPath);
                     DeleteFile(e.State.FinalPath);
@@ -232,7 +374,8 @@ public sealed class DownloadManager : IDownloadManager
         EngineOptions options;
         lock (_lock)
         {
-            if (!_byId.TryGetValue(id, out e) || e.Updating || e.Status == DownloadStatus.Completed)
+            if (!_byId.TryGetValue(id, out e) || e.Updating || e.Status == DownloadStatus.Completed
+                || e.State.Kind == DownloadKind.Torrent)
                 return false;
             e.Updating = true;   // the scheduler leaves it alone until the update is applied
             run = e.Run;
@@ -324,6 +467,7 @@ public sealed class DownloadManager : IDownloadManager
 
     public void ApplyOptions(EngineOptions options)
     {
+        _torrents.ApplyOptions(options);
         lock (_lock)
         {
             _options = options;
@@ -385,7 +529,7 @@ public sealed class DownloadManager : IDownloadManager
         }
 
         return new DownloadSnapshot(s.Id, s.FileName ?? e.DisplayName, s.FinalPath ?? s.PartPath, s.OriginalUrl,
-            s.TotalBytes, downloaded, speed, eta, e.Status, text, connections, s.QueueOrder);
+            s.TotalBytes, downloaded, speed, eta, e.Status, text, connections, s.QueueOrder, s.Kind);
     }
 
     // ---- scheduler ----------------------------------------------------------------------------------------
@@ -422,7 +566,9 @@ public sealed class DownloadManager : IDownloadManager
     private void Start(Entry e)
     {
         var cts = new CancellationTokenSource();
-        var job = new DownloadJob(e.State, _options, _http, _limits, _store, _log, path => IsPathTaken(e, path));
+        IDownloadJob job = e.State.Kind == DownloadKind.Torrent
+            ? new TorrentJob(e.State, _options, _torrents, _http, _store, _log, hash => IsOtherTorrent(e, hash))
+            : new DownloadJob(e.State, _options, _http, _limits, _store, _log, path => IsPathTaken(e, path));
         e.Job = job;
         e.Cts = cts;
         e.Running = true;
@@ -433,7 +579,7 @@ public sealed class DownloadManager : IDownloadManager
         e.Run = Task.Run(() => RunEntryAsync(e, job, cts.Token));
     }
 
-    private async Task RunEntryAsync(Entry e, DownloadJob job, CancellationToken ct)
+    private async Task RunEntryAsync(Entry e, IDownloadJob job, CancellationToken ct)
     {
         lock (e.SaveLock)
         {
@@ -606,6 +752,69 @@ public sealed class DownloadManager : IDownloadManager
         }
     }
 
+    /// <summary>
+    /// Deletes a torrent's downloaded files (and their partial ".!mt" versions), then the folders that became
+    /// empty: only the torrent's own files, never other things that happen to sit in a folder of the same name.
+    /// </summary>
+    private void DeleteTorrentData(DownloadState s)
+    {
+        var root = s.FinalPath ?? s.PartPath;
+        if (root is null)
+            return;   // no metadata yet: nothing was written
+        Torrent? torrent = null;
+        if (s.TorrentFilePath is { } copy && File.Exists(copy))
+            Torrent.TryLoad(copy, out torrent);
+
+        if (torrent is null)
+        {
+            if (File.Exists(root) || File.Exists(root + PartialSuffix))
+            {
+                DeleteFile(root);
+                DeleteFile(root + PartialSuffix);
+            }
+            else if (Directory.Exists(root))
+            {
+                _log.Warn($"torrent: no metadata to delete {root} safely, leaving it");
+            }
+            return;
+        }
+        if (torrent.Files.Count == 1)
+        {
+            DeleteFile(root);
+            DeleteFile(root + PartialSuffix);
+            return;
+        }
+
+        var full = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        foreach (var file in torrent.Files)
+        {
+            var path = Path.GetFullPath(Path.Combine(root, file.Path));
+            if (!path.StartsWith(full, StringComparison.OrdinalIgnoreCase))
+                continue;
+            DeleteFile(path);
+            DeleteFile(path + PartialSuffix);
+        }
+
+        try
+        {
+            if (!Directory.Exists(root))
+                return;
+            foreach (var dir in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
+                                         .OrderByDescending(d => d.Length).Append(root).ToList())
+            {
+                if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                    Directory.Delete(dir);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.Warn($"torrent: cannot delete folder {root}: {ex.Message}");
+        }
+    }
+
+    /// <summary>MonoTorrent's suffix for a file that is not complete yet (UsePartialFiles).</summary>
+    private const string PartialSuffix = ".!mt";
+
     // ---- persistence --------------------------------------------------------------------------------------
 
     /// <summary>
@@ -670,7 +879,7 @@ public sealed class DownloadManager : IDownloadManager
                 return;
             foreach (var e in _list)
             {
-                if (e.Running && e.Status == DownloadStatus.Downloading && e.Job?.StatusText is not null)
+                if (e.Running && e.Status == DownloadStatus.Downloading && e.Job?.WaitingToRetry == true)
                 {
                     e.Status = DownloadStatus.Queued;   // RunEntryAsync keeps it queued, Pump starts it again
                     Stop(e);
@@ -711,6 +920,8 @@ public sealed class DownloadManager : IDownloadManager
         foreach (var e in entries)
             Save(e, onlyIfPending: true);   // a requested save now; one in flight is waited out
 
+        await _torrents.DisposeAsync().ConfigureAwait(false);
+
         if (_ownsHttp)
             _http.Dispose();
         _log.Info("manager: stopped");
@@ -721,6 +932,14 @@ public sealed class DownloadManager : IDownloadManager
     /// <summary>LoadAll accepts any JSON object; only states a job can run are taken.</summary>
     private static bool IsUsable(DownloadState s, out string why)
     {
+        if (s.Kind == DownloadKind.Torrent)
+        {
+            why = s.Id == Guid.Empty ? "no id"
+                : s.Magnet is null && s.TorrentFilePath is null && !Uri.TryCreate(s.OriginalUrl, UriKind.Absolute, out _) ? "no torrent source"
+                : "";
+            return why.Length == 0;
+        }
+
         why = s.Id == Guid.Empty ? "no id"
             : s.Segments is null ? "no segments"
             : !Uri.TryCreate(s.CurrentUrl, UriKind.Absolute, out var url)
@@ -731,6 +950,8 @@ public sealed class DownloadManager : IDownloadManager
 
     private static long DownloadedOf(DownloadState s)
     {
+        if (s.Kind == DownloadKind.Torrent)
+            return s.Status == DownloadStatus.Completed ? s.TotalBytes ?? s.BytesDone : s.BytesDone;
         if (s.Status == DownloadStatus.Completed)
             return s.TotalBytes ?? 0;
         long sum = 0;
@@ -743,6 +964,14 @@ public sealed class DownloadManager : IDownloadManager
     {
         if (!string.IsNullOrWhiteSpace(s.FileName))
             return s.FileName;
+        if (s.Kind == DownloadKind.Torrent)
+        {
+            if (s.InfoHash is { Length: >= 8 } hash)
+                return $"Торрент {hash[..8].ToLowerInvariant()}";
+            return Uri.TryCreate(s.OriginalUrl, UriKind.Absolute, out var link) && !link.IsFile
+                ? FileNameResolver.Resolve(null, link)
+                : Path.GetFileNameWithoutExtension(s.OriginalUrl);
+        }
         if (!string.IsNullOrWhiteSpace(s.RequestedFileName))
             return FileNameResolver.Sanitize(s.RequestedFileName);
         return Uri.TryCreate(s.OriginalUrl, UriKind.Absolute, out var url) ? FileNameResolver.Resolve(null, url) : s.OriginalUrl;
@@ -782,7 +1011,7 @@ public sealed class DownloadManager : IDownloadManager
         public bool Running;
         public bool Updating;
         public bool Removed;
-        public DownloadJob? Job;
+        public IDownloadJob? Job;
         public CancellationTokenSource? Cts;
         public Task? Run;
         public SpeedMeter Speed = new(SpeedWindow);

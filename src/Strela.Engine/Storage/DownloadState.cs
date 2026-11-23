@@ -9,6 +9,8 @@ public sealed record SegmentState(long Start, long End, long Position);
 public sealed class DownloadState
 {
     public Guid Id { get; set; }
+    /// <summary>Нет в старых файлах → Http.</summary>
+    public DownloadKind Kind { get; set; } = DownloadKind.Http;
     public string OriginalUrl { get; set; } = "";
     public string CurrentUrl { get; set; } = "";
     public string? Referer { get; set; }
@@ -33,6 +35,17 @@ public sealed class DownloadState
     public long QueueOrder { get; set; }
     public DateTimeOffset AddedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+
+    // ---- торренты (Kind = Torrent); OriginalUrl — то, что добавил пользователь: magnet, путь к .torrent или http(s)-ссылка ----
+
+    /// <summary>magnet-ссылка, если торрент добавлен ею.</summary>
+    public string? Magnet { get; set; }
+    /// <summary>Копия .torrent в папке состояния (после разбора файла, скачивания по ссылке или получения метаданных).</summary>
+    public string? TorrentFilePath { get; set; }
+    /// <summary>Hex info-hash (v1, а для чистого v2 — v2); по нему ищутся дубликаты.</summary>
+    public string? InfoHash { get; set; }
+    /// <summary>Скачано байт (проверенные куски) на момент последнего сохранения.</summary>
+    public long BytesDone { get; set; }
 
     public DownloadRequest ToRequest() =>
         new(new Uri(CurrentUrl), Referer, Headers, Cookies, RequestedFileName);

@@ -31,7 +31,7 @@ namespace Strela.Engine.Jobs;
 /// host's ceiling.
 /// </para>
 /// </summary>
-internal sealed class DownloadJob
+internal sealed class DownloadJob : IDownloadJob
 {
     private const string DiskFullText = "Нет места на диске";
     private const string StaleLinkText = "Ссылка устарела — обновите ссылку";
@@ -101,6 +101,15 @@ internal sealed class DownloadJob
                 var ms = _retryDeadlines.Min() - Environment.TickCount64;
                 return $"Повтор через {Math.Max(1, (int)Math.Ceiling(ms / 1000.0))} с";
             }
+        }
+    }
+
+    public bool WaitingToRetry
+    {
+        get
+        {
+            lock (_retryDeadlines)
+                return _retryDeadlines.Count > 0;
         }
     }
 

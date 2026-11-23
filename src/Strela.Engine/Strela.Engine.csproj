@@ -9,4 +9,8 @@
     <InternalsVisibleTo Include="Strela.Engine.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="MonoTorrent" Version="3.0.2" />
+  </ItemGroup>
+
 </Project>

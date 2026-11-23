@@ -10,9 +10,15 @@ public sealed record IpcMessage(
     string? Cookies = null,
     string? FileName = null)
 {
-    /// <summary>Запрос на скачивание или null, если адрес не абсолютный http/https.</summary>
+    /// <summary>
+    /// Запрос на скачивание или null. Принимаются абсолютные http/https-адреса, magnet-ссылки (второй экземпляр,
+    /// открытый по ссылке из браузера) и пути к существующим локальным .torrent-файлам (двойной клик по файлу);
+    /// всё остальное (file: к другим файлам, javascript: и т. п.) отбрасывается.
+    /// </summary>
     public DownloadRequest? ToRequest()
     {
+        if (Torrents.TorrentLinks.TryParse(Url, out var torrent))
+            return new DownloadRequest(torrent, Referer, Headers, Cookies, FileName);
         if (!Uri.TryCreate(Url, UriKind.Absolute, out var uri)) return null;
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return null;
         return new DownloadRequest(uri, Referer, Headers, Cookies, FileName);
