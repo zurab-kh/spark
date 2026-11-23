@@ -4,6 +4,7 @@ using Strela.App.Services;
 using Strela.App.ViewModels;
 using Strela.App.Views;
 using Strela.Engine;
+using Strela.Engine.Integration;
 using Strela.Engine.Manager;
 
 namespace Strela.App;
@@ -31,9 +32,6 @@ public partial class App : Application
     private ISingleInstanceChannel? _channel;
     private bool _exiting;
 
-    // Task 12: replace with FileUrlDetector.TryDetect
-    private readonly Func<string, Uri?> _detectFileUrl = text => LinkParser.TryParseHttp(text, out var u) ? u : null;
-
     public App()
     {
 #pragma warning disable WPF0001 // Fluent-тема и ThemeMode пока помечены как экспериментальные
@@ -60,6 +58,7 @@ public partial class App : Application
 
         var data = KnownFolders.AppData();
         _log = new FileLog(Path.Combine(data, "logs"));
+        _channel = new PipeSingleInstanceChannel(log: _log);
         DispatcherUnhandledException += (_, ex) => _log.Error("Необработанное исключение в UI", ex.Exception);
 
         _settingsStore = new SettingsStore(Path.Combine(data, "settings.json"));
@@ -156,7 +155,7 @@ public partial class App : Application
     {
         if (!_settings.WatchClipboard || _vm is null) return;
         var line = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
-        if (line is null || _detectFileUrl(line) is not { } url) return;
+        if (line is null || !FileUrlDetector.TryDetect(line, out var url)) return;
         if (_vm.Contains(url.AbsoluteUri) || _vm.Contains(url.OriginalString)) return;
         var name = Uri.UnescapeDataString(url.Segments.LastOrDefault()?.Trim('/') ?? "");
         if (name.Length == 0) name = url.Host;
