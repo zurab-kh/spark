@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Spark</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon-48.png" width="32" height="32" alt="">
+    <h1>Spark</h1>
+  </header>
+
+  <label class="row">
+    <span>Перехватывать загрузки</span>
+    <input type="checkbox" id="enabled" role="switch">
+  </label>
+
+  <p id="status" class="status" data-state="checking">
+    <span class="dot"></span><span id="status-text">Проверяю связь со Spark…</span>
+  </p>
+  <p id="hint" class="hint" hidden></p>
+  <p class="hint">Alt + клик по ссылке — скачать средствами браузера.</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

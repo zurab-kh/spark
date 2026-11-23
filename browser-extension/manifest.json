@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "Spark: перехват загрузок",
+  "short_name": "Spark",
+  "version": "1.0.0",
+  "description": "Передаёт загрузки из Chrome и Edge в Spark: быстрее и с докачкой.",
+  "minimum_chrome_version": "110",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzoC1Zq6yoYcrP0gvSmssL/ZHtXrk53on11YFiOd0WvqL03phPWK+EVWuuR9xdKrw2U5F9BkqKSf1T+73kDYEw6fh9wRZ9P/PM6RSzRl8mPj//RXDbXW9Ou+j1KvXPHWyz1uCAXBDvgUWRjB6IfWv4ZKPxOHw303a3VGJA+BFWjtnFb5vuiboWSjDiGDk8s8PabN6IpqTL3O5IJ9uOdOrYkbhPX/r0oNCUdgiaTxfm54om+bulPMw3xwaS1OBdp5n4zapbLs8EGqDeTcURnMqS0mAtf+jqHJxydJIBCLFTbompH/kKXOu5wfk8I9tvaWGlfKklXLJrCH60j3fra989QIDAQAB",
+  "permissions": ["downloads", "cookies", "nativeMessaging", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "Spark",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}
