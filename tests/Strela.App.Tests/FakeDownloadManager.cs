@@ -17,10 +17,13 @@ public sealed class FakeDownloadManager : IDownloadManager
 
     public Task InitializeAsync() => Task.CompletedTask;
 
+    /// <summary>When set, Add returns this id — imitates the manager returning an existing download for a duplicate link.</summary>
+    public Guid? AddReturns { get; set; }
+
     public Guid Add(DownloadRequest request)
     {
         Added.Add(request);
-        return Guid.NewGuid();
+        return AddReturns ?? Guid.NewGuid();
     }
 
     public void Pause(Guid id) { }

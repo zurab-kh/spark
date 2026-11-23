@@ -1,3 +1,4 @@
+using Strela.Engine.Integration;
 using Strela.App.ViewModels;
 using Strela.Engine.Manager;
 using static Strela.App.Tests.FakeDownloadManager;
@@ -7,6 +8,37 @@ namespace Strela.App.Tests;
 public class MainViewModelTests
 {
     private const long MB = 1024 * 1024;
+
+    [Fact]
+    public void AddRequests_ForAlreadyDownloadedFile_RaisesAlreadyDownloaded()
+    {
+        var fake = new FakeDownloadManager();
+        var done = new DownloadSnapshot(Guid.NewGuid(), "big.zip", @"C:\dl\big.zip", "https://h/big.zip",
+            100, 100, 0, null, DownloadStatus.Completed, null, 0, 0);
+        fake.Snapshots.Add(done);
+        var vm = new MainViewModel(fake);
+        vm.Refresh();
+        DownloadItemViewModel? reported = null;
+        vm.AlreadyDownloaded += item => reported = item;
+
+        fake.AddReturns = done.Id;   // manager answers with the existing finished download
+        vm.AddRequests(new[] { new IpcMessage("https://h/big.zip") });
+
+        Assert.Equal(done.Id, reported?.Id);
+    }
+
+    [Fact]
+    public void AddLinks_NewLink_DoesNotRaiseAlreadyDownloaded()
+    {
+        var fake = new FakeDownloadManager();
+        var vm = new MainViewModel(fake);
+        var raised = false;
+        vm.AlreadyDownloaded += _ => raised = true;
+
+        vm.AddLinks("https://h/new.zip");
+
+        Assert.False(raised);
+    }
 
     [Fact]
     public void AddLinks_SplitsLinesIgnoresJunk()

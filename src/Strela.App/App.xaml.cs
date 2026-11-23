@@ -89,6 +89,9 @@ public partial class App : Application
         _lag = new UiLagMonitor(Dispatcher, _log);
         SessionEnding += (_, _) => DisposeManager();
 
+        _vm.AlreadyDownloaded += item =>
+            ShowToast($"Уже скачано: {item.FileName}", () => Shell.RevealInFolder(item.FilePath), "Показать в папке");
+
         _channel.MessagesReceived += messages => Dispatcher.InvokeAsync(() =>
         {
             _log.Info($"Получено ссылок от другого экземпляра или браузера: {messages.Count}");

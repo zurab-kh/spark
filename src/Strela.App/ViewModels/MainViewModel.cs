@@ -128,6 +128,16 @@ public sealed partial class MainViewModel : ObservableObject
         TotalsText = $"Всего: {SpeedTotalText} · {ActiveText} · {QueuedText}";
     }
 
+    /// <summary>Ссылку уже скачали, файл на месте — новая загрузка не создана.</summary>
+    public event Action<DownloadItemViewModel>? AlreadyDownloaded;
+
+    private void AddOne(DownloadRequest request)
+    {
+        var id = _manager.Add(request);
+        if (_byId.TryGetValue(id, out var item) && item.IsCompleted)
+            AlreadyDownloaded?.Invoke(item);
+    }
+
     /// <summary>Каждая строка — абсолютный http/https адрес. Возвращает число добавленных; 0 → подсказка.</summary>
     public int AddLinks(string? text)
     {
@@ -135,7 +145,7 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var line in (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             if (!LinkParser.TryParseHttp(line, out var url)) continue;
-            _manager.Add(new DownloadRequest(url));
+            AddOne(new DownloadRequest(url));
             added++;
         }
         if (added > 0)
@@ -157,7 +167,7 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var message in messages)
         {
             if (message.ToRequest() is not { } request) continue;
-            _manager.Add(request);
+            AddOne(request);
             added++;
         }
         if (added > 0)

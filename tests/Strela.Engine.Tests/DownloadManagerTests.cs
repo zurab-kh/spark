@@ -74,6 +74,38 @@ public sealed class DownloadManagerTests : IAsyncLifetime
         Assert.Single(manager.GetSnapshots());
     }
 
+    // The browser can fire the same download twice (a site's download dialog left open, a double click):
+    // a finished download whose file is still on disk must not be fetched again.
+    [Fact]
+    public async Task Duplicate_OfCompletedDownload_IsNotDownloadedAgain()
+    {
+        var url = _server.AddFile("done.bin", TestData.Random(2 * MB, 7));
+        var manager = await NewManager(Options());
+
+        var id = manager.Add(new DownloadRequest(url));
+        await WaitFor(manager, snaps => snaps.Single().Status == DownloadStatus.Completed);
+        var again = manager.Add(new DownloadRequest(url));
+
+        Assert.Equal(id, again);
+        Assert.Single(manager.GetSnapshots());
+        Assert.Single(Directory.GetFiles(DownloadFolder, "done*"));
+    }
+
+    [Fact]
+    public async Task Duplicate_OfCompletedDownload_WhoseFileWasDeleted_DownloadsAgain()
+    {
+        var url = _server.AddFile("gone.bin", TestData.Random(2 * MB, 8));
+        var manager = await NewManager(Options());
+
+        var id = manager.Add(new DownloadRequest(url));
+        await WaitFor(manager, snaps => snaps.Single().Status == DownloadStatus.Completed);
+        File.Delete(manager.GetSnapshots().Single().FilePath!);
+        var again = manager.Add(new DownloadRequest(url));
+
+        Assert.NotEqual(id, again);
+        await WaitFor(manager, snaps => snaps.Count == 2 && snaps.All(s => s.Status == DownloadStatus.Completed));
+    }
+
     [Fact]
     public async Task PauseResume_CompletesCorrectly()
     {

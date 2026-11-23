@@ -111,9 +111,12 @@ public sealed class DownloadManager : IDownloadManager
         lock (_lock)
         {
             var key = url.AbsoluteUri;
+            // Same link already in progress, or already downloaded and the file is still there → don't fetch it again
+            // (the browser may fire one download twice, e.g. from a site's download dialog left open).
             var existing = _list.Find(e =>
-                (e.Status is DownloadStatus.Queued or DownloadStatus.Downloading or DownloadStatus.Paused) &&
-                (e.State.OriginalUrl == key || e.State.CurrentUrl == key));
+                (e.State.OriginalUrl == key || e.State.CurrentUrl == key) &&
+                (e.Status is DownloadStatus.Queued or DownloadStatus.Downloading or DownloadStatus.Paused ||
+                 e.Status == DownloadStatus.Completed && e.State.FinalPath is { } done && File.Exists(done)));
             if (existing is not null)
                 return existing.State.Id;
 
