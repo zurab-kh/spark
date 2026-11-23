@@ -9,6 +9,9 @@ public sealed class StateStoreTests : IDisposable
 
     public void Dispose()
     {
+        if (Directory.Exists(_dir))
+            foreach (var f in Directory.EnumerateFiles(_dir))
+                File.SetAttributes(f, FileAttributes.Normal);
         try { Directory.Delete(_dir, recursive: true); } catch (IOException) { }
     }
 
@@ -133,6 +136,23 @@ public sealed class StateStoreTests : IDisposable
 
         Assert.Single(loaded);
         Assert.False(File.Exists(tmp));
+    }
+
+    [Fact]
+    public void LoadAll_UndeletableTmpFile_DoesNotStopLoading()
+    {
+        var store = new StateStore(_dir);
+        var good = Sample();
+        store.Save(good);
+        var tmp = Path.Combine(_dir, Guid.NewGuid().ToString("D") + ".json.tmp");
+        File.WriteAllText(tmp, "{ half");
+        File.SetAttributes(tmp, FileAttributes.ReadOnly);
+        var log = new ListLog();
+
+        var loaded = store.LoadAll(log);
+
+        Assert.Equal(good.Id, Assert.Single(loaded).Id);
+        Assert.True(log.Contains("Warn", "cannot delete"));
     }
 
     [Fact]

@@ -45,7 +45,7 @@ public sealed class StateStore
         foreach (var tmp in Directory.EnumerateFiles(_folder, "*.json.tmp"))
         {
             try { File.Delete(tmp); }
-            catch (IOException ex) { log.Warn($"state: cannot delete {Path.GetFileName(tmp)}: {ex.Message}"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.Warn($"state: cannot delete {Path.GetFileName(tmp)}: {ex.Message}"); }
         }
 
         var result = new List<DownloadState>();
