@@ -162,6 +162,21 @@ public class PoliciesTests
     }
 
     [Fact]
+    public void Slow_SparseSamples_ResetTracking()
+    {
+        var monitor = NewMonitor();
+        var slow = Workers(100 * KB);
+        IReadOnlyList<WorkerSample> single = [new(2, 100 * KB, 50 * MB)];
+
+        Assert.Empty(monitor.Evaluate(slow, TimeSpan.Zero));
+        Assert.Empty(monitor.Evaluate(single, TimeSpan.FromSeconds(3)));
+        // Not observed continuously: the timer starts over at t=7.
+        Assert.Empty(monitor.Evaluate(slow, TimeSpan.FromSeconds(7)));
+        Assert.Empty(monitor.Evaluate(slow, TimeSpan.FromSeconds(12)));
+        Assert.Equal([2], monitor.Evaluate(slow, TimeSpan.FromSeconds(13)));
+    }
+
+    [Fact]
     public void Slow_ForgetsWorkersThatDisappear()
     {
         var monitor = NewMonitor();

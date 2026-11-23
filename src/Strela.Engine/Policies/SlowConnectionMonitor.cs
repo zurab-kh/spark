@@ -26,7 +26,11 @@ public sealed class SlowConnectionMonitor
     public IReadOnlyList<int> Evaluate(IReadOnlyList<WorkerSample> samples, TimeSpan now)
     {
         if (samples.Count < 2)
+        {
+            // Nobody is evaluated, so slowness is no longer observed continuously.
+            _slowSince.Clear();
             return [];
+        }
 
         var median = Median(samples);
         var flagged = new List<int>();
