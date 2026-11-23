@@ -162,6 +162,7 @@ internal sealed class TorrentService : IAsyncDisposable
                 MaximumUploadRate = Math.Max(0, options.TorrentMaxUploadRate),
                 MaximumDownloadRate = Math.Max(0, options.TorrentMaxDownloadRate),
                 UsePartialFiles = true,   // "name.!mt" until the file is complete
+                WebSeedDelay = TimeSpan.FromSeconds(5),   // torrents with HTTP seeds (archive.org…) start fast
             }.ToSettings();
 
             var engine = new ClientEngine(settings);
