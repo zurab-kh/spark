@@ -207,5 +207,5 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private static bool DefaultConfirmDelete(string message) =>
-        MessageBox.Show(message, "Стрела", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+        MessageBox.Show(message, "Spark", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 }

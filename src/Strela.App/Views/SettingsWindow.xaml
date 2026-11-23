@@ -103,7 +103,7 @@
                 <CheckBox Grid.Column="1" x:Name="ClipboardCheck" VerticalAlignment="Center">
                     <StackPanel>
                         <TextBlock Text="Следить за буфером обмена" />
-                        <TextBlock Text="Скопировали ссылку на файл — Стрела предложит скачать" Style="{StaticResource Hint}" />
+                        <TextBlock Text="Скопировали ссылку на файл — Spark предложит скачать" Style="{StaticResource Hint}" />
                     </StackPanel>
                 </CheckBox>
             </Grid>

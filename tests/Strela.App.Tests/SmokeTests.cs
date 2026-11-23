@@ -5,6 +5,6 @@ public class SmokeTests
     [Fact]
     public void AppAssembly_IsNamedStrela()
     {
-        Assert.Equal("Strela", typeof(Strela.App.App).Assembly.GetName().Name);
+        Assert.Equal("Spark", typeof(Strela.App.App).Assembly.GetName().Name);
     }
 }

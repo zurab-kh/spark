@@ -23,7 +23,7 @@
                            Foreground="{DynamicResource TextOnAccentFillColorPrimaryBrush}" />
             </Border>
             <StackPanel Grid.Column="1">
-                <TextBlock Text="Стрела" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <TextBlock Text="Spark" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
                 <TextBlock x:Name="MessageText" TextWrapping="Wrap" FontSize="14" FontWeight="SemiBold" Margin="0,2,0,0" />
                 <Button x:Name="ActionButton" Margin="0,12,0,0" Padding="18,6" HorizontalAlignment="Left"
                         Style="{DynamicResource AccentButtonStyle}" Cursor="Hand"

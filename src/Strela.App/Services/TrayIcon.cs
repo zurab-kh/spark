@@ -20,17 +20,17 @@ public sealed class TrayIcon : IDisposable
         _icon = new NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "Стрела",
+            Text = "Spark",
             ContextMenuStrip = menu,
             Visible = true,
         };
         _icon.DoubleClick += (_, _) => open();
     }
 
-    /// <summary>Подсказка вида «Стрела — 42 МБ/с»; без активной скорости — просто «Стрела».</summary>
+    /// <summary>Подсказка вида «Spark — 42 МБ/с»; без активной скорости — просто «Spark».</summary>
     public void SetSpeed(string speedText)
     {
-        var text = string.IsNullOrEmpty(speedText) ? "Стрела" : "Стрела — " + speedText;
+        var text = string.IsNullOrEmpty(speedText) ? "Spark" : "Spark — " + speedText;
         if (text == _tooltip) return;
         _tooltip = text;
         _icon.Text = text.Length > 127 ? text[..127] : text;

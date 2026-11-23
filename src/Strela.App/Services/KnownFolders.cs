@@ -28,6 +28,25 @@ public static class KnownFolders
         return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
     }
 
-    public static string AppData() =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Strela");
+    /// <summary>
+    /// %LOCALAPPDATA%\Spark. The app was called «Стрела» before: its folder is moved over once, so saved
+    /// downloads and settings survive the rename; if the move fails (old version still running) the old
+    /// folder is used as is.
+    /// </summary>
+    public static string AppData()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var current = Path.Combine(local, "Spark");
+        var legacy = Path.Combine(local, "Strela");
+        if (Directory.Exists(current) || !Directory.Exists(legacy)) return current;
+        try
+        {
+            Directory.Move(legacy, current);
+            return current;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return legacy;
+        }
+    }
 }

@@ -23,7 +23,7 @@ public static class IpcProtocol
 {
     private static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true };
 
-    public static string PipeName => "Strela.Ipc.v1." + Environment.UserName;
+    public static string PipeName => "Spark.Ipc.v1." + Environment.UserName;
 
     /// <summary>JSON-массив; пустой массив означает «показать окно».</summary>
     public static string Serialize(IReadOnlyList<IpcMessage> messages) =>

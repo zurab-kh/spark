@@ -23,7 +23,7 @@ public sealed class ClipboardWatcher : IDisposable
 
     public ClipboardWatcher()
     {
-        _source = new HwndSource(new HwndSourceParameters("StrelaClipboard") { ParentWindow = HwndMessage, WindowStyle = 0 });
+        _source = new HwndSource(new HwndSourceParameters("SparkClipboard") { ParentWindow = HwndMessage, WindowStyle = 0 });
         _source.AddHook(WndProc);
         AddClipboardFormatListener(_source.Handle);
     }
