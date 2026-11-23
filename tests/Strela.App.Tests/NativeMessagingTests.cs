@@ -24,7 +24,9 @@ public class NativeMessagingTests
     private static NativeMessagingHost Host(string pipe, bool enabled = true, Func<bool>? launch = null,
         TimeSpan? startWait = null) =>
         new(() => enabled, NullLog.Instance, pipe, launch ?? (() => false), startWait ?? TimeSpan.FromMilliseconds(500),
-            TimeSpan.FromMilliseconds(150));
+            TimeSpan.FromMilliseconds(150), () => Now);
+
+    private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-11-23T19:00:00Z");
 
     [Fact]
     public async Task Frames_RoundTrip_Utf8AndLittleEndianLength()
@@ -62,7 +64,7 @@ public class NativeMessagingTests
         await using var server = StartServer(pipe, out var received);
 
         var reply = await Host(pipe).HandleAsync("""
-            {"url":"https://example.com/big.iso","referer":"https://example.com/page","fileName":"big.iso",
+            {"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"https://example.com/big.iso","referer":"https://example.com/page","fileName":"big.iso",
              "cookies":"a=1; b=2","headers":{"User-Agent":"UA/1"}}
             """);
 
@@ -83,14 +85,14 @@ public class NativeMessagingTests
 
         var input = new MemoryStream();
         await NativeMessagingFrames.WriteAsync(input, """{"type":"ping"}""");
-        await NativeMessagingFrames.WriteAsync(input, """{"url":"http://h/x.zip"}""");
+        await NativeMessagingFrames.WriteAsync(input, """{"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"http://h/x.zip"}""");
         input.Position = 0;
         var output = new MemoryStream();
 
         await Host(pipe).RunAsync(input, output);
 
         output.Position = 0;
-        Assert.Equal("""{"ok":true,"enabled":true}""", await NativeMessagingFrames.ReadAsync(output));
+        Assert.Equal("""{"ok":true,"enabled":true,"v":2}""", await NativeMessagingFrames.ReadAsync(output));
         Assert.Equal("""{"ok":true}""", await NativeMessagingFrames.ReadAsync(output));
         Assert.Null(await NativeMessagingFrames.ReadAsync(output));
         Assert.Equal("http://h/x.zip", Assert.Single(await received.WaitAsync(TimeSpan.FromSeconds(3))).Url);
@@ -102,7 +104,7 @@ public class NativeMessagingTests
         var pipe = NewPipe();
         await using var server = StartServer(pipe, out var received);
 
-        var reply = await Host(pipe, enabled: false).HandleAsync("""{"url":"https://example.com/big.iso"}""");
+        var reply = await Host(pipe, enabled: false).HandleAsync("""{"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"https://example.com/big.iso"}""");
 
         using var doc = JsonDocument.Parse(reply);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
@@ -113,11 +115,11 @@ public class NativeMessagingTests
     [Fact]
     public async Task Host_Ping_ReportsEnabledState()
     {
-        Assert.Equal("""{"ok":true,"enabled":false}""", await Host(NewPipe(), enabled: false).HandleAsync("""{"type":"ping"}"""));
+        Assert.Equal("""{"ok":true,"enabled":false,"v":2}""", await Host(NewPipe(), enabled: false).HandleAsync("""{"type":"ping"}"""));
     }
 
     [Theory]
-    [InlineData("""{"url":"ftp://h/x"}""")]
+    [InlineData("""{"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"ftp://h/x"}""")]
     [InlineData("""{"referer":"https://h/"}""")]
     [InlineData("[1,2]")]
     [InlineData("не json")]
@@ -126,6 +128,28 @@ public class NativeMessagingTests
         var reply = await Host(NewPipe()).HandleAsync(json);
         using var doc = JsonDocument.Parse(reply);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    // Old extension builds forwarded the browser's whole download history; Spark itself must refuse it.
+    [Theory]
+    [InlineData("""{"url":"https://example.com/big.iso","fileName":"C__Users_Zu_Downloads_big.iso"}""", "outdated")]         // pre-fix extension: no version
+    [InlineData("""{"v":1,"startTime":"2026-11-23T18:59:59.5Z","url":"https://example.com/big.iso"}""", "outdated")]
+    [InlineData("""{"v":2,"url":"https://example.com/big.iso"}""", "not new")]                                                // no start time
+    [InlineData("""{"v":2,"startTime":"2026-10-01T10:00:00Z","url":"https://example.com/big.iso"}""", "not new")]          // history item
+    [InlineData("""{"v":2,"startTime":"2026-11-23T18:58:00Z","url":"https://example.com/big.iso"}""", "not new")]          // 2 min old
+    [InlineData("""{"v":2,"startTime":"garbage","url":"https://example.com/big.iso"}""", "not new")]
+    public async Task Host_RejectsOutdatedExtensionAndOldDownloads_AndForwardsNothing(string json, string reason)
+    {
+        var pipe = NewPipe();
+        await using var server = StartServer(pipe, out var received);
+
+        var reply = await Host(pipe).HandleAsync(json);
+
+        using var doc = JsonDocument.Parse(reply);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Contains(reason, doc.RootElement.GetProperty("error").GetString());
+        await Task.Delay(300);
+        Assert.False(received.IsCompleted);
     }
 
     [Fact]
@@ -142,7 +166,7 @@ public class NativeMessagingTests
             return true;
         }, startWait: TimeSpan.FromSeconds(3));
 
-        var reply = await host.HandleAsync("""{"url":"https://example.com/a.zip"}""");
+        var reply = await host.HandleAsync("""{"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"https://example.com/a.zip"}""");
 
         Assert.Equal("""{"ok":true}""", reply);
         Assert.Equal(1, launches);
@@ -156,7 +180,7 @@ public class NativeMessagingTests
         var launches = 0;
         var host = Host(NewPipe(), launch: () => { launches++; return true; }, startWait: TimeSpan.FromMilliseconds(600));
 
-        var reply = await host.HandleAsync("""{"url":"https://example.com/a.zip"}""");
+        var reply = await host.HandleAsync("""{"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"https://example.com/a.zip"}""");
 
         using var doc = JsonDocument.Parse(reply);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
@@ -201,7 +225,7 @@ public class NativeMessagingTests
         channel.Start();
 
         var reply = await Host(pipe).HandleAsync(
-            """{"url":"https://example.com/f.bin","referer":"https://example.com/","cookies":"s=1","fileName":"f.bin"}""");
+            """{"v":2,"startTime":"2026-11-23T18:59:59.5Z","url":"https://example.com/f.bin","referer":"https://example.com/","cookies":"s=1","fileName":"f.bin"}""");
         await done.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
         Assert.Equal("""{"ok":true}""", reply);

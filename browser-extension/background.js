@@ -45,6 +45,8 @@ chrome.downloads.onCreated.addListener(async (item) => {
     if (!shouldIntercept(item) || !(await isEnabled()) || altRecent()) return;
 
     const message = {
+      v: 2,                       // protocol version: Spark refuses messages from older extension builds
+      startTime: item.startTime,  // Spark double-checks that this is a new download, not browser history
       url: item.url,
       referer: item.referrer || null,
       fileName: baseName(item.filename),
