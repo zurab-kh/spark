@@ -155,6 +155,41 @@ public class ProberTests
         Assert.Equal("b.zip", result.FileName);
     }
 
+    [Fact]
+    public async Task Probe_HeadFallbackAlsoFails_IgnoresErrorMetadata()
+    {
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return new HttpResponseMessage(HttpStatusCode.MethodNotAllowed);
+            }
+
+            var head = new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new ByteArrayContent([]) };
+            head.Content.Headers.ContentLength = 123;
+            head.Headers.AcceptRanges.Add("bytes");
+            return head;
+        }));
+
+        var result = await Prober.ProbeAsync(http, new DownloadRequest(new Uri("http://example.test/a/b.zip")), CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.NotFound, result.Status);
+        Assert.Null(result.TotalBytes);
+        Assert.False(result.SupportsRanges);
+        Assert.Equal("b.zip", result.FileName);
+    }
+
+    [Fact]
+    public void NewRequest_CustomUserAgent_ReplacesBuiltIn()
+    {
+        var req = new DownloadRequest(new Uri("http://example.test/x"),
+            Headers: new Dictionary<string, string> { ["user-agent"] = "Custom/2" });
+
+        using var request = StrelaHttp.NewRequest(req, req.Url);
+
+        Assert.Equal("Custom/2", request.Headers.UserAgent.ToString());
+    }
+
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

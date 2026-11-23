@@ -46,7 +46,12 @@ public static class StrelaHttp
     /// <summary>Заголовки запроса из <paramref name="req"/> (UA, Referer, пользовательские, Cookie) — без Range.</summary>
     internal static void Apply(HttpRequestMessage request, DownloadRequest req)
     {
-        request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        // Пользовательский User-Agent заменяет встроенный, а не дописывается к нему.
+        var customUserAgent = req.Headers?.Keys.Any(k => string.Equals(k, "User-Agent", StringComparison.OrdinalIgnoreCase)) == true;
+        if (!customUserAgent)
+        {
+            request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
+        }
 
         if (!string.IsNullOrWhiteSpace(req.Referer) && Uri.TryCreate(req.Referer, UriKind.Absolute, out var referer))
         {

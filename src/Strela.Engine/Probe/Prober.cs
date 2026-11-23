@@ -15,6 +15,11 @@ public static class Prober
         if (response.StatusCode is HttpStatusCode.RequestedRangeNotSatisfiable or HttpStatusCode.MethodNotAllowed)
         {
             using var head = await SendAsync(http, req, HttpMethod.Head, rangeProbe: false, ct);
+            if ((int)head.StatusCode >= 400)
+            {
+                return Build(req, head, null, false);
+            }
+
             return Build(req, head, head.Content.Headers.ContentLength,
                 head.Headers.AcceptRanges.Contains("bytes", StringComparer.OrdinalIgnoreCase));
         }
