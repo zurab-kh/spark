@@ -45,17 +45,6 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void List_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        // Имя занимает всё свободное место.
-        if (List.View is not GridView view) return;
-        double others = 0;
-        foreach (var c in view.Columns)
-            if (!ReferenceEquals(c, NameColumn)) others += c.ActualWidth;
-        var free = List.ActualWidth - others - SystemParameters.VerticalScrollBarWidth - 12;
-        NameColumn.Width = Math.Max(160, free);
-    }
-
     private void Item_DoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is ListViewItem { DataContext: DownloadItemViewModel { IsCompleted: true } item })

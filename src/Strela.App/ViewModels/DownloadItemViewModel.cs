@@ -15,6 +15,8 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     private DownloadStatus _status;
     private string? _filePath;
     private string _url = "";
+    private string _detailText = "";
+    private string _typeLabel = "";
 
     public DownloadItemViewModel(Guid id) => Id = id;
 
@@ -28,6 +30,10 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     public string EtaText { get => _etaText; private set => SetProperty(ref _etaText, value); }
     public string? FilePath { get => _filePath; private set => SetProperty(ref _filePath, value); }
     public string Url { get => _url; private set => SetProperty(ref _url, value); }
+    /// <summary>Строка под именем: «412 МБ из 607 МБ · 42 МБ/с · осталось 0:45», «Готово · 607 МБ», текст ошибки…</summary>
+    public string DetailText { get => _detailText; private set => SetProperty(ref _detailText, value); }
+    /// <summary>Короткая метка типа файла для значка: «ZIP», «ISO», «EXE»…</summary>
+    public string TypeLabel { get => _typeLabel; private set => SetProperty(ref _typeLabel, value); }
 
     public DownloadStatus Status
     {
@@ -39,10 +45,16 @@ public sealed partial class DownloadItemViewModel : ObservableObject
             OnPropertyChanged(nameof(CanPause));
             OnPropertyChanged(nameof(CanResume));
             OnPropertyChanged(nameof(CanRetry));
+            OnPropertyChanged(nameof(IsActive));
+            OnPropertyChanged(nameof(IsError));
+            OnPropertyChanged(nameof(ShowProgressBar));
         }
     }
 
     public bool IsCompleted => Status == DownloadStatus.Completed;
+    public bool IsActive => Status == DownloadStatus.Downloading;
+    public bool IsError => Status == DownloadStatus.Error;
+    public bool ShowProgressBar => Status is not (DownloadStatus.Completed or DownloadStatus.Error);
     public bool CanPause => Status is DownloadStatus.Downloading or DownloadStatus.Queued;
     public bool CanResume => Status == DownloadStatus.Paused;
     public bool CanRetry => Status == DownloadStatus.Error;
@@ -67,6 +79,30 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         var downloading = s.Status == DownloadStatus.Downloading;
         SpeedText = downloading ? Format.Speed(s.BytesPerSecond) : "";
         EtaText = downloading ? Format.Eta(s.Eta) : "";
+        TypeLabel = LabelFor(s.FileName);
+        DetailText = Detail(s);
+    }
+
+    private string Detail(DownloadSnapshot s)
+    {
+        var done = s.TotalBytes is > 0 ? $"{Format.Bytes(s.DownloadedBytes)} из {SizeText}" : Format.Bytes(s.DownloadedBytes);
+        return s.Status switch
+        {
+            DownloadStatus.Completed => $"Готово · {SizeText}",
+            DownloadStatus.Queued => s.TotalBytes is > 0 ? $"В очереди · {SizeText}" : "В очереди",
+            DownloadStatus.Paused => $"Пауза · {done}",
+            DownloadStatus.Error => s.StatusText ?? "Ошибка",
+            _ => Join(done, SpeedText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}", s.StatusText),
+        };
+    }
+
+    private static string Join(params string?[] parts) =>
+        string.Join(" · ", parts.Where(p => !string.IsNullOrEmpty(p)));
+
+    private static string LabelFor(string fileName)
+    {
+        var ext = Path.GetExtension(fileName).TrimStart('.').ToUpperInvariant();
+        return ext.Length is > 0 and <= 4 ? ext : "FILE";
     }
 
     private static double Fraction(DownloadSnapshot s) =>
