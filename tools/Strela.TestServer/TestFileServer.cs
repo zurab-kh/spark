@@ -145,7 +145,7 @@ public sealed class TestFileServer : IAsyncDisposable
         {
             await ServeAsync(context, version, options, connectionIndex, isHead);
         }
-        catch (Exception e) when (e is OperationCanceledException or IOException or InvalidOperationException)
+        catch (Exception e) when (e is OperationCanceledException or IOException)
         {
             // Клиент оборвал соединение — для тестового сервера это штатная ситуация.
         }

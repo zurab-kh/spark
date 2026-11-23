@@ -88,11 +88,28 @@ public class TestServerTests
     public async Task DropAfterBytes_AbortsConnectionMidBody()
     {
         await using var server = await TestFileServer.StartAsync();
-        var content = TestData.Random(100_000, 5);
+        var content = TestData.Random(1_000_000, 5);
         var url = server.AddFile("a.bin", content, new ServeOptions(DropAfterBytes: 30_000));
         using var http = new HttpClient();
 
-        await Assert.ThrowsAnyAsync<HttpRequestException>(() => http.GetByteArrayAsync(url));
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await using var body = await response.Content.ReadAsStreamAsync();
+
+        long received = 0;
+        var buffer = new byte[8192];
+        var failure = await Record.ExceptionAsync(async () =>
+        {
+            int n;
+            while ((n = await body.ReadAsync(buffer)) > 0)
+            {
+                received += n;
+            }
+        });
+
+        Assert.NotNull(failure);
+        // Abort() может потерять уже отправленные байты: N — верхняя граница, а не точное число.
+        Assert.InRange(received, 1, 30_000);
     }
 
     [Fact]
