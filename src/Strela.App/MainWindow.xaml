@@ -61,7 +61,7 @@
                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                   ContextMenuOpening="List_ContextMenuOpening">
             <ListView.ItemContainerStyle>
-                <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Type ListViewItem}}">
+                <Style TargetType="ListViewItem" BasedOn="{StaticResource {x:Static GridView.GridViewItemContainerStyleKey}}">
                     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                     <EventSetter Event="MouseDoubleClick" Handler="Item_DoubleClick" />
                     <EventSetter Event="PreviewMouseRightButtonDown" Handler="Item_RightClick" />
