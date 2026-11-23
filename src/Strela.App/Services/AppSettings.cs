@@ -13,6 +13,10 @@ public sealed record AppSettings
     public bool Notifications { get; init; } = true;
     public bool StartWithWindows { get; init; } = false;
     public bool InterceptBrowserDownloads { get; init; } = true;   // расширение Chrome/Edge передаёт загрузки в Spark
+    /// <summary>Версия формата файла; 0 — файл старой версии (до автоподбора соединений). Пишется при сохранении.</summary>
+    public int SettingsVersion { get; init; }
+
+    public const int CurrentSettingsVersion = 2;
 
     public AppSettings Clamped() => this with
     {

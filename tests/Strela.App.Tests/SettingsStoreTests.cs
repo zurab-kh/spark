@@ -46,6 +46,25 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(0, new AppSettings().ToEngineOptions(Path.GetTempPath()).ConnectionsPerFile);
 
     [Fact]
+    public void Settings_OldFileWithDefault16_MigratesToAuto()
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, "settings.json");
+        File.WriteAllText(path, """{ "ConnectionsPerFile": 16, "MaxActiveDownloads": 4 }""");
+        var s = new SettingsStore(path).Load();
+        Assert.Equal(0, s.ConnectionsPerFile);
+        Assert.Equal(4, s.MaxActiveDownloads);
+    }
+
+    [Fact]
+    public void Settings_ChosenAfterUpgrade_IsKept()
+    {
+        var store = new SettingsStore(Path.Combine(_dir, "settings.json"));
+        store.Save(new AppSettings { ConnectionsPerFile = 16 });
+        Assert.Equal(16, store.Load().ConnectionsPerFile);
+    }
+
+    [Fact]
     public void Settings_Corrupt_Defaults()
     {
         var path = Path.Combine(_dir, "settings.json");
