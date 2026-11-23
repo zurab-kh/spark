@@ -137,22 +137,35 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Ссылку уже скачали, файл на месте — новая загрузка не создана.</summary>
     public event Action<DownloadItemViewModel>? AlreadyDownloaded;
 
-    private void AddOne(DownloadRequest request)
+    /// <summary>false — движок не принял запрос (битый .torrent-файл, неверная magnet-ссылка).</summary>
+    private bool AddOne(DownloadRequest request)
     {
-        var id = _manager.Add(request);
+        Guid id;
+        try
+        {
+            id = _manager.Add(request);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
         if (_byId.TryGetValue(id, out var item) && item.IsCompleted)
             AlreadyDownloaded?.Invoke(item);
+        return true;
     }
 
-    /// <summary>Каждая строка — абсолютный http/https адрес. Возвращает число добавленных; 0 → подсказка.</summary>
+    /// <summary>
+    /// Каждая строка — http/https адрес, magnet-ссылка или путь к .torrent-файлу. Возвращает число добавленных;
+    /// 0 → подсказка.
+    /// </summary>
     public int AddLinks(string? text)
     {
-        var added = 0;
+        int added = 0, rejected = 0;
         foreach (var line in (text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            if (!LinkParser.TryParseHttp(line, out var url)) continue;
-            AddOne(new DownloadRequest(url));
-            added++;
+            if (!LinkParser.TryParseLink(line, out var url)) continue;
+            if (AddOne(new DownloadRequest(url))) added++;
+            else rejected++;
         }
         if (added > 0)
         {
@@ -161,7 +174,7 @@ public sealed partial class MainViewModel : ObservableObject
         }
         else
         {
-            InputHint = "Не найдено ссылок";
+            InputHint = rejected > 0 ? "Не удалось открыть торрент" : "Не найдено ссылок";
         }
         return added;
     }
@@ -173,8 +186,7 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var message in messages)
         {
             if (message.ToRequest() is not { } request) continue;
-            AddOne(request);
-            added++;
+            if (AddOne(request)) added++;
         }
         if (added > 0)
         {

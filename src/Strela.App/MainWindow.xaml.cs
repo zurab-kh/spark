@@ -93,8 +93,14 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private static string? TryGetText(IDataObject data)
+    /// <summary>Перетащенные .torrent-файлы (по пути на строку) или текст со ссылками.</summary>
+    internal static string? TryGetText(IDataObject data)
     {
+        if (data.GetDataPresent(DataFormats.FileDrop) && data.GetData(DataFormats.FileDrop) is string[] files)
+        {
+            var torrents = files.Where(f => f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase)).ToList();
+            return torrents.Count > 0 ? string.Join("\n", torrents) : null;
+        }
         if (data.GetDataPresent(DataFormats.UnicodeText)) return data.GetData(DataFormats.UnicodeText) as string;
         if (data.GetDataPresent(DataFormats.Text)) return data.GetData(DataFormats.Text) as string;
         return null;

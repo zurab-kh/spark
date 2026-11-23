@@ -44,7 +44,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     public string StatusLabel { get => _statusLabel; private set => SetProperty(ref _statusLabel, value); }
     /// <summary>Остаток строки подробностей после <see cref="StatusLabel"/> (вместе с « · », если он есть).</summary>
     public string DetailTail { get => _detailTail; private set => SetProperty(ref _detailTail, value); }
-    /// <summary>Цвет значка типа: archive, disk, app, media, document или other.</summary>
+    /// <summary>Цвет значка типа: archive, disk, app, media, document, torrent или other.</summary>
     public string BadgeKind { get => _badgeKind; private set => SetProperty(ref _badgeKind, value); }
 
     public DownloadStatus Status
@@ -97,8 +97,8 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         SpeedText = downloading ? Format.Speed(s.BytesPerSecond) : "";
         EtaText = downloading ? Format.Eta(s.Eta) : "";
         PercentText = s.TotalBytes is > 0 ? $"{(int)(Progress * 100)}%" : "";
-        TypeLabel = LabelFor(s.FileName);
-        BadgeKind = KindFor(TypeLabel);
+        TypeLabel = s.Kind == DownloadKind.Torrent ? "TOR" : LabelFor(s.FileName);
+        BadgeKind = s.Kind == DownloadKind.Torrent ? "torrent" : KindFor(TypeLabel);
         DetailText = Detail(s);
         StatusLabel = s.Status switch
         {
@@ -131,6 +131,9 @@ public sealed partial class DownloadItemViewModel : ObservableObject
             DownloadStatus.Queued => s.TotalBytes is > 0 ? $"В очереди · {SizeText}" : "В очереди",
             DownloadStatus.Paused => $"Приостановлено · {done}",
             DownloadStatus.Error => s.StatusText ?? "Ошибка",
+            // Торрент: «1.2 ГБ из 4.0 ГБ · 12 МБ/с · сиды 30 · пиры 12 · осталось 3:10».
+            _ when s.Kind == DownloadKind.Torrent =>
+                Join(done, SpeedText, s.StatusText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}"),
             _ => Join(done, SpeedText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}", s.StatusText),
         };
     }

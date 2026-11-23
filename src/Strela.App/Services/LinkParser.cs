@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Strela.Engine.Torrents;
 
 namespace Strela.App.Services;
 
@@ -14,4 +15,11 @@ public static class LinkParser
         url = u;
         return true;
     }
+
+    /// <summary>
+    /// То, что можно скачать: абсолютный http/https адрес, magnet-ссылка или путь к существующему .torrent-файлу
+    /// (для файла — file:-адрес).
+    /// </summary>
+    public static bool TryParseLink(string? text, [NotNullWhen(true)] out Uri? url) =>
+        TryParseHttp(text, out url) || TorrentLinks.TryParse(text, out url);
 }

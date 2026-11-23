@@ -6,6 +6,7 @@ using Strela.App.Views;
 using Strela.Engine;
 using Strela.Engine.Integration;
 using Strela.Engine.Manager;
+using Strela.Engine.Torrents;
 
 namespace Strela.App;
 
@@ -45,7 +46,8 @@ public partial class App : Application
         base.OnStartup(e);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
-        var args = e.Args.Where(a => LinkParser.TryParseHttp(a, out _)).ToList();
+        // Ссылки, magnet и пути к .torrent (двойной клик по файлу, magnet из браузера → "Spark.exe" "%1").
+        var args = e.Args.Where(a => LinkParser.TryParseLink(a, out _)).ToList();
         _mutex = new Mutex(true, MutexName, out _ownsMutex);
         _channel = new PipeSingleInstanceChannel();
         if (!_ownsMutex)
@@ -101,6 +103,7 @@ public partial class App : Application
         });
         _channel.Start();
         RegisterBrowserHost();
+        ApplyTorrentAssociation(_settings.HandleTorrents);
 
         if (args.Count > 0) _vm.AddLinks(string.Join("\n", args));
         _window.Show();
@@ -114,6 +117,15 @@ public partial class App : Application
         if (string.IsNullOrEmpty(exe) || !string.Equals(Path.GetFileName(exe), "Spark.exe", StringComparison.OrdinalIgnoreCase)) return;
         var fallback = KnownFolders.AppData();
         _ = Task.Run(() => NativeHostRegistration.Register(exe, new CurrentUserRegistryWriter(), log, fallback));
+    }
+
+    /// <summary>magnet: и .torrent → Spark (или снять регистрацию); в фоне. Только для настоящего Spark.exe.</summary>
+    private void ApplyTorrentAssociation(bool enabled)
+    {
+        var exe = Environment.ProcessPath;
+        var log = _log!;
+        if (string.IsNullOrEmpty(exe) || !string.Equals(Path.GetFileName(exe), "Spark.exe", StringComparison.OrdinalIgnoreCase)) return;
+        _ = Task.Run(() => TorrentAssociation.Apply(enabled, exe, new CurrentUserRegistryEditor(), log));
     }
 
     private void OnFirstRender(object? sender, EventArgs e)
@@ -169,7 +181,16 @@ public partial class App : Application
     {
         if (!_settings.WatchClipboard || _vm is null) return;
         var line = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
-        if (line is null || !FileUrlDetector.TryDetect(line, out var url)) return;
+        if (line is null) return;
+        if (TorrentLinks.IsMagnet(line))
+        {
+            if (_vm.Contains(line)) return;
+            var title = TorrentLinks.MagnetName(line);
+            _log?.Info("Буфер обмена: magnet-ссылка");
+            ShowToast(title is null ? "Скачать торрент?" : $"Скачать торрент {title}?", () => _vm.AddLinks(line), "Скачать");
+            return;
+        }
+        if (!FileUrlDetector.TryDetect(line, out var url)) return;
         if (_vm.Contains(url.AbsoluteUri) || _vm.Contains(url.OriginalString)) return;
         var name = Uri.UnescapeDataString(url.Segments.LastOrDefault()?.Trim('/') ?? "");
         if (name.Length == 0) name = url.Host;
@@ -207,7 +228,9 @@ public partial class App : Application
 
     private void ApplySettings(AppSettings s)
     {
+        var torrentsChanged = s.HandleTorrents != _settings.HandleTorrents;
         _settings = s;
+        if (torrentsChanged) ApplyTorrentAssociation(s.HandleTorrents);
         try { _settingsStore!.Save(s); }
         catch (Exception ex) { _log!.Error("Не удалось сохранить настройки", ex); }
         _manager!.ApplyOptions(s.ToEngineOptions(_stateFolder));

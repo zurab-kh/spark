@@ -148,6 +148,23 @@
             </Grid>
         </Border>
 
+        <Border Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="&#xE71B;" Style="{StaticResource CardIcon}" />
+                <CheckBox Grid.Column="1" x:Name="TorrentsCheck" VerticalAlignment="Center">
+                    <StackPanel>
+                        <TextBlock Text="Открывать magnet и .torrent в Spark" />
+                        <TextBlock Text="Magnet-ссылки из браузера и двойной клик по .torrent-файлу запускают загрузку в Spark"
+                                   Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </CheckBox>
+            </Grid>
+        </Border>
+
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
             <Button Content="Сохранить" Padding="22,7" Click="Save_Click" IsDefault="True"
                     Style="{DynamicResource AccentButtonStyle}" />

@@ -27,6 +27,7 @@ public partial class SettingsWindow : Window
         NotifyCheck.IsChecked = current.Notifications;
         AutostartCheck.IsChecked = current.StartWithWindows;
         BrowserCheck.IsChecked = current.InterceptBrowserDownloads;
+        TorrentsCheck.IsChecked = current.HandleTorrents;
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -48,6 +49,7 @@ public partial class SettingsWindow : Window
             Notifications = NotifyCheck.IsChecked == true,
             StartWithWindows = AutostartCheck.IsChecked == true,
             InterceptBrowserDownloads = BrowserCheck.IsChecked == true,
+            HandleTorrents = TorrentsCheck.IsChecked == true,
         };
         _onSave(settings.Clamped());
         Close();

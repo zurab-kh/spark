@@ -12,6 +12,10 @@ public static class TorrentLinks
     /// <summary>magnet:?xt=urn:btih:… (v1) или urn:btmh:… (v2), который MonoTorrent может разобрать.</summary>
     public static bool IsMagnet(string? text) => TryParseMagnet(text, out _);
 
+    /// <summary>Имя из параметра dn magnet-ссылки; null, если это не magnet или имени нет.</summary>
+    public static string? MagnetName(string? text) =>
+        TryParseMagnet(text, out var magnet) && !string.IsNullOrWhiteSpace(magnet.Name) ? magnet.Name : null;
+
     internal static bool TryParseMagnet(string? text, [NotNullWhen(true)] out MagnetLink? magnet)
     {
         magnet = null;

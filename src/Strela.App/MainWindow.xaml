@@ -44,6 +44,10 @@
                     <Setter Property="Background" Value="#2614B8A6" />
                     <Setter Property="TextElement.Foreground" Value="#2DD4BF" />
                 </DataTrigger>
+                <DataTrigger Binding="{Binding BadgeKind}" Value="torrent">
+                    <Setter Property="Background" Value="#26EC4899" />
+                    <Setter Property="TextElement.Foreground" Value="#F472B6" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding IsError}" Value="True">
                     <Setter Property="Background" Value="#33C42B1C" />
                     <Setter Property="TextElement.Foreground" Value="#FF6B6B" />
