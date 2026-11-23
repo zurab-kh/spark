@@ -19,12 +19,17 @@ public sealed class PipeSingleInstanceChannel : ISingleInstanceChannel
     }
 
     public event Action<IReadOnlyList<string>>? Received;
+    public event Action<IReadOnlyList<IpcMessage>>? MessagesReceived;
 
     public void Start()
     {
         if (_server is not null) return;
         _server = new IpcServer(_pipeName, _log);
-        _server.Received += messages => Received?.Invoke(messages.Select(m => m.Url).ToList());
+        _server.Received += messages =>
+        {
+            Received?.Invoke(messages.Select(m => m.Url).ToList());
+            MessagesReceived?.Invoke(messages);
+        };
         _server.Start();
     }
 

@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Strela.App.Services;
 using Strela.Engine;
+using Strela.Engine.Integration;
 using Strela.Engine.Manager;
 
 namespace Strela.App.ViewModels;
@@ -145,6 +146,24 @@ public sealed partial class MainViewModel : ObservableObject
         else
         {
             InputHint = "Не найдено ссылок";
+        }
+        return added;
+    }
+
+    /// <summary>Сообщения от расширения браузера или второго экземпляра: Referer, заголовки, cookies и имя файла сохраняются.</summary>
+    public int AddRequests(IEnumerable<IpcMessage> messages)
+    {
+        var added = 0;
+        foreach (var message in messages)
+        {
+            if (message.ToRequest() is not { } request) continue;
+            _manager.Add(request);
+            added++;
+        }
+        if (added > 0)
+        {
+            InputHint = null;
+            Refresh();
         }
         return added;
     }

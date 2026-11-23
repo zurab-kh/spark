@@ -89,17 +89,28 @@ public partial class App : Application
         _lag = new UiLagMonitor(Dispatcher, _log);
         SessionEnding += (_, _) => DisposeManager();
 
-        _channel.Received += urls => Dispatcher.InvokeAsync(() =>
+        _channel.MessagesReceived += messages => Dispatcher.InvokeAsync(() =>
         {
-            _log.Info($"Получено ссылок от другого экземпляра: {urls.Count}");
-            try { if (urls.Count > 0) _vm.AddLinks(string.Join("\n", urls)); }
+            _log.Info($"Получено ссылок от другого экземпляра или браузера: {messages.Count}");
+            try { if (messages.Count > 0) _vm.AddRequests(messages); }
             catch (Exception ex) { _log.Error("Не удалось добавить ссылки от другого экземпляра", ex); }
             ShowWindow();
         });
         _channel.Start();
+        RegisterBrowserHost();
 
         if (args.Count > 0) _vm.AddLinks(string.Join("\n", args));
         _window.Show();
+    }
+
+    /// <summary>Манифест native host и ключи реестра для Chrome и Edge; в фоне, чтобы не тормозить запуск.</summary>
+    private void RegisterBrowserHost()
+    {
+        var exe = Environment.ProcessPath;
+        var log = _log!;
+        if (string.IsNullOrEmpty(exe) || !string.Equals(Path.GetFileName(exe), "Spark.exe", StringComparison.OrdinalIgnoreCase)) return;
+        var fallback = KnownFolders.AppData();
+        _ = Task.Run(() => NativeHostRegistration.Register(exe, new CurrentUserRegistryWriter(), log, fallback));
     }
 
     private void OnFirstRender(object? sender, EventArgs e)

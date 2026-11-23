@@ -9,5 +9,8 @@ public interface ISingleInstanceChannel : IDisposable
     /// <summary>Пришли ссылки от другого экземпляра (поток не UI).</summary>
     event Action<IReadOnlyList<string>>? Received;
 
+    /// <summary>То же с полным содержимым: Referer, заголовки, cookies, имя файла (от расширения браузера).</summary>
+    event Action<IReadOnlyList<Strela.Engine.Integration.IpcMessage>>? MessagesReceived;
+
     void Start();
 }

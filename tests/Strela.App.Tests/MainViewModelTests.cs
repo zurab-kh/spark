@@ -19,6 +19,24 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void AddRequests_PassesRefererHeadersCookiesAndFileName()
+    {
+        var fake = new FakeDownloadManager();
+        var vm = new MainViewModel(fake);
+        var message = new Strela.Engine.Integration.IpcMessage("https://h/x.zip", "https://h/page",
+            new Dictionary<string, string> { ["User-Agent"] = "UA" }, "a=1", "x.zip");
+
+        Assert.Equal(1, vm.AddRequests(new[] { message, new Strela.Engine.Integration.IpcMessage("ftp://h/y") }));
+
+        var request = Assert.Single(fake.Added);
+        Assert.Equal("https://h/x.zip", request.Url.AbsoluteUri);
+        Assert.Equal("https://h/page", request.Referer);
+        Assert.Equal("a=1", request.Cookies);
+        Assert.Equal("x.zip", request.FileName);
+        Assert.Equal("UA", request.Headers!["User-Agent"]);
+    }
+
+    [Fact]
     public void AddLinks_None_SetsHint()
     {
         var vm = new MainViewModel(new FakeDownloadManager());

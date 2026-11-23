@@ -126,6 +126,23 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
+                <TextBlock Text="&#xE774;" Style="{StaticResource CardIcon}" />
+                <CheckBox Grid.Column="1" x:Name="BrowserCheck" VerticalAlignment="Center">
+                    <StackPanel>
+                        <TextBlock Text="Перехватывать загрузки браузера" />
+                        <TextBlock Text="Расширение Spark для Chrome/Edge: папка browser-extension рядом со Spark.exe → chrome://extensions → Режим разработчика → Загрузить распакованное"
+                                   Style="{StaticResource Hint}" />
+                    </StackPanel>
+                </CheckBox>
+            </Grid>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
                 <TextBlock Text="&#xE7E8;" Style="{StaticResource CardIcon}" />
                 <CheckBox Grid.Column="1" x:Name="AutostartCheck" Content="Запускать вместе с Windows" VerticalAlignment="Center" />
             </Grid>

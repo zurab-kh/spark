@@ -10,10 +10,24 @@
     <Product>Spark</Product>
     <ApplicationIcon>Assets\spark.ico</ApplicationIcon>
     <Company>Spark</Company>
+    <StartupObject>Strela.App.Program</StartupObject>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Strela.Engine\Strela.Engine.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Свой Program.Main: режим native host не должен поднимать WPF. -->
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Расширение браузера едет рядом со Spark.exe (build и dotnet publish). -->
+    <Content Include="..\..\browser-extension\**\*"
+             Link="browser-extension\%(RecursiveDir)%(Filename)%(Extension)"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -22,6 +22,7 @@ public partial class SettingsWindow : Window
         ClipboardCheck.IsChecked = current.WatchClipboard;
         NotifyCheck.IsChecked = current.Notifications;
         AutostartCheck.IsChecked = current.StartWithWindows;
+        BrowserCheck.IsChecked = current.InterceptBrowserDownloads;
     }
 
     private void Browse_Click(object sender, RoutedEventArgs e)
@@ -42,6 +43,7 @@ public partial class SettingsWindow : Window
             WatchClipboard = ClipboardCheck.IsChecked == true,
             Notifications = NotifyCheck.IsChecked == true,
             StartWithWindows = AutostartCheck.IsChecked == true,
+            InterceptBrowserDownloads = BrowserCheck.IsChecked == true,
         };
         _onSave(settings.Clamped());
         Close();

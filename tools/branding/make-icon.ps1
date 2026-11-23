@@ -1,6 +1,7 @@
 # Renders the Spark logo (same geometry as spark-logo.svg) to PNGs and a multi-size spark.ico.
 # Usage: powershell -File tools/branding/make-icon.ps1 -OutDir src/Strela.App/Assets
-param([Parameter(Mandatory)][string]$OutDir)
+# -ExtensionIconDir additionally writes icon-16/32/48/128.png for browser-extension/icons.
+param([Parameter(Mandatory)][string]$OutDir, [string]$ExtensionIconDir = "")
 
 Add-Type -AssemblyName System.Drawing
 $ErrorActionPreference = 'Stop'
@@ -46,6 +47,10 @@ foreach ($sz in $sizes) {
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $pngs[$sz] = $ms.ToArray()
     if ($sz -eq 256) { $bmp.Save((Join-Path $OutDir 'spark-256.png'), [System.Drawing.Imaging.ImageFormat]::Png) }
+    if ($ExtensionIconDir -and (16, 32, 48, 128) -contains $sz) {
+        New-Item -ItemType Directory -Force $ExtensionIconDir | Out-Null
+        $bmp.Save((Join-Path $ExtensionIconDir "icon-$sz.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+    }
     $bmp.Dispose()
 }
 

@@ -10,6 +10,7 @@ public sealed record AppSettings
     public bool WatchClipboard { get; init; } = true;
     public bool Notifications { get; init; } = true;
     public bool StartWithWindows { get; init; } = false;
+    public bool InterceptBrowserDownloads { get; init; } = true;   // расширение Chrome/Edge передаёт загрузки в Spark
 
     public AppSettings Clamped() => this with
     {
