@@ -207,7 +207,8 @@
         <!-- Список загрузок -->
         <Grid Grid.Row="2" Margin="0,14,0,0">
             <ListView x:Name="List" ItemsSource="{Binding Items}"
-                      SelectionMode="Single" BorderThickness="0" Background="Transparent"
+                      SelectionMode="Extended" BorderThickness="0" Background="Transparent"
+                      KeyDown="List_KeyDown"
                       VirtualizingStackPanel.IsVirtualizing="True"
                       VirtualizingStackPanel.VirtualizationMode="Recycling"
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
@@ -375,10 +376,12 @@
                         <MenuItem Header="Ниже" Command="{Binding MoveDownCommand}"
                                   CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                         <Separator />
-                        <MenuItem Header="Удалить из списка" Command="{Binding RemoveCommand}"
-                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
-                        <MenuItem Header="Удалить с файлом…" Command="{Binding RemoveWithFileCommand}"
-                                  CommandParameter="{Binding PlacementTarget.SelectedItem, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Удалить из списка" InputGestureText="Del" Command="{Binding RemoveSelectedCommand}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItems, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <MenuItem Header="Удалить с файлом…" InputGestureText="Shift+Del" Command="{Binding RemoveSelectedWithFileCommand}"
+                                  CommandParameter="{Binding PlacementTarget.SelectedItems, RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                        <Separator />
+                        <MenuItem Header="Выделить все" InputGestureText="Ctrl+A" Click="SelectAll_Click" />
                     </ContextMenu>
                 </ListView.ContextMenu>
             </ListView>

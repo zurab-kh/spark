@@ -53,8 +53,25 @@ public partial class MainWindow : Window
 
     private void Item_RightClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is ListViewItem item) item.IsSelected = true;
+        // Правый клик по уже выделенной строке сохраняет всё выделение (чтобы удалить несколько сразу),
+        // по другой строке — выделяет только её.
+        if (sender is not ListViewItem item || item.IsSelected) return;
+        List.SelectedItems.Clear();
+        item.IsSelected = true;
     }
+
+    private void List_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || List.SelectedItems.Count == 0) return;
+        var selected = List.SelectedItems.Cast<object>().ToList();
+        if ((Keyboard.Modifiers & ModifierKeys.Shift) != 0)
+            _vm.RemoveSelectedWithFileCommand.Execute(selected);
+        else
+            _vm.RemoveSelectedCommand.Execute(selected);
+        e.Handled = true;
+    }
+
+    private void SelectAll_Click(object sender, RoutedEventArgs e) => List.SelectAll();
 
     private void List_ContextMenuOpening(object sender, ContextMenuEventArgs e)
     {

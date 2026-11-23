@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.ObjectModel;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -32,6 +33,8 @@ public sealed partial class MainViewModel : ObservableObject
         CopyUrlCommand = new RelayCommand<DownloadItemViewModel>(CopyUrl);
         RemoveCommand = new AsyncRelayCommand<DownloadItemViewModel>(i => RemoveAsync(i, false));
         RemoveWithFileCommand = new AsyncRelayCommand<DownloadItemViewModel>(RemoveWithFileAsync);
+        RemoveSelectedCommand = new AsyncRelayCommand<IEnumerable>(s => RemoveSelectedAsync(s, deleteFile: false));
+        RemoveSelectedWithFileCommand = new AsyncRelayCommand<IEnumerable>(s => RemoveSelectedAsync(s, deleteFile: true));
         MoveUpCommand = new RelayCommand<DownloadItemViewModel>(i => MoveBy(i, -1));
         MoveDownCommand = new RelayCommand<DownloadItemViewModel>(i => MoveBy(i, +1));
         UpdateUrlCommand = new AsyncRelayCommand<DownloadItemViewModel>(UpdateUrlAsync);
@@ -76,6 +79,9 @@ public sealed partial class MainViewModel : ObservableObject
     public IRelayCommand<DownloadItemViewModel> MoveDownCommand { get; }
     public IAsyncRelayCommand<DownloadItemViewModel> UpdateUrlCommand { get; }
     public IAsyncRelayCommand<DownloadItemViewModel> RemoveWithFileCommand { get; }
+    /// <summary>Параметр — выделенные строки списка (ListView.SelectedItems).</summary>
+    public IAsyncRelayCommand<IEnumerable> RemoveSelectedCommand { get; }
+    public IAsyncRelayCommand<IEnumerable> RemoveSelectedWithFileCommand { get; }
 
     public bool Contains(string url) => _byId.Values.Any(i => string.Equals(i.Url, url, StringComparison.OrdinalIgnoreCase));
 
@@ -216,9 +222,28 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task RemoveWithFileAsync(DownloadItemViewModel? item)
     {
         if (item is null) return;
-        if (!ConfirmDelete($"Удалить «{item.FileName}» вместе с файлом на диске?")) return;
-        await RemoveAsync(item, true);
+        await RemoveSelectedAsync(new[] { item }, deleteFile: true);
     }
+
+    /// <summary>Удаляет выделенные загрузки; с файлами — после одного подтверждения на все сразу.</summary>
+    private async Task RemoveSelectedAsync(IEnumerable? selected, bool deleteFile)
+    {
+        var items = selected?.OfType<DownloadItemViewModel>().ToList() ?? new();
+        if (items.Count == 0) return;
+        if (deleteFile)
+        {
+            var question = items.Count == 1
+                ? $"Удалить «{items[0].FileName}» вместе с файлом на диске?"
+                : $"Удалить {items.Count} {Plural(items.Count, "загрузку", "загрузки", "загрузок")} вместе с файлами на диске?";
+            if (!ConfirmDelete(question)) return;
+        }
+        foreach (var item in items)
+            await _manager.RemoveAsync(item.Id, deleteFile);
+        Refresh();
+    }
+
+    private static string Plural(int n, string one, string few, string many) =>
+        (n % 100) is >= 11 and <= 14 ? many : (n % 10) switch { 1 => one, >= 2 and <= 4 => few, _ => many };
 
     private async Task UpdateUrlAsync(DownloadItemViewModel? item)
     {

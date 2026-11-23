@@ -27,6 +27,70 @@ public class MainViewModelTests
         Assert.Equal(done.Id, reported?.Id);
     }
 
+    private static (FakeDownloadManager Fake, MainViewModel Vm) ThreeDownloads()
+    {
+        var fake = new FakeDownloadManager();
+        for (var i = 0; i < 3; i++)
+            fake.Snapshots.Add(new DownloadSnapshot(Guid.NewGuid(), $"f{i}.zip", $@"C:\dl\f{i}.zip", $"https://h/f{i}.zip",
+                100, 100, 0, null, DownloadStatus.Completed, null, 0, i));
+        var vm = new MainViewModel(fake);
+        vm.Refresh();
+        return (fake, vm);
+    }
+
+    [Fact]
+    public async Task RemoveSelectedWithFile_RemovesAllSelected_AfterOneConfirmation()
+    {
+        var (fake, vm) = ThreeDownloads();
+        var prompts = new List<string>();
+        var keptId = vm.Items[1].Id;
+        vm.ConfirmDelete = m => { prompts.Add(m); return true; };
+
+        await vm.RemoveSelectedWithFileCommand.ExecuteAsync(new List<object> { vm.Items[0], vm.Items[2] });
+
+        Assert.Equal("Удалить 2 загрузки вместе с файлами на диске?", Assert.Single(prompts));
+        Assert.Equal(2, fake.Removed.Count);
+        Assert.All(fake.Removed, r => Assert.True(r.DeleteFile));
+        Assert.DoesNotContain(fake.Removed, r => r.Id == keptId);
+    }
+
+    [Fact]
+    public async Task RemoveSelectedWithFile_Declined_RemovesNothing()
+    {
+        var (fake, vm) = ThreeDownloads();
+        vm.ConfirmDelete = _ => false;
+
+        await vm.RemoveSelectedWithFileCommand.ExecuteAsync(vm.Items.Cast<object>().ToList());
+
+        Assert.Empty(fake.Removed);
+    }
+
+    [Fact]
+    public async Task RemoveSelected_WithoutFile_DoesNotAsk()
+    {
+        var (fake, vm) = ThreeDownloads();
+        vm.ConfirmDelete = _ => throw new InvalidOperationException("must not ask");
+
+        await vm.RemoveSelectedCommand.ExecuteAsync(vm.Items.Cast<object>().ToList());
+
+        Assert.Equal(3, fake.Removed.Count);
+        Assert.All(fake.Removed, r => Assert.False(r.DeleteFile));
+    }
+
+    [Theory]
+    [InlineData(1, "Удалить «f0.zip» вместе с файлом на диске?")]
+    [InlineData(3, "Удалить 3 загрузки вместе с файлами на диске?")]
+    public async Task RemoveSelectedWithFile_PromptText(int count, string expected)
+    {
+        var (_, vm) = ThreeDownloads();
+        string? prompt = null;
+        vm.ConfirmDelete = m => { prompt = m; return false; };
+
+        await vm.RemoveSelectedWithFileCommand.ExecuteAsync(vm.Items.Take(count).Cast<object>().ToList());
+
+        Assert.Equal(expected, prompt);
+    }
+
     [Fact]
     public void AddLinks_NewLink_DoesNotRaiseAlreadyDownloaded()
     {
