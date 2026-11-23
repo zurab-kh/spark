@@ -13,7 +13,7 @@ namespace Strela.Engine.Jobs;
 /// <para>
 /// Locking: <c>_segmentsLock</c> guards the segment list and segment ownership; steals (split + add) and the
 /// "all done" check happen under it, and so does the state snapshot, so a freshly stolen tail is never missed.
-/// <c>_saveLock</c> serialises state saves with single-stream truncation. Order: _saveLock → _segmentsLock → Segment.
+/// The <see cref="JobStateSaver"/> serialises state saves with single-stream truncation. Order: saver → _segmentsLock → Segment.
 /// </para>
 /// </summary>
 internal sealed class DownloadJob
@@ -22,14 +22,13 @@ internal sealed class DownloadJob
 
     private readonly HttpClient _http;
     private readonly HostLimits _limits;
-    private readonly StateStore _store;
     private readonly IStrelaLog _log;
+    private readonly JobStateSaver _saver;
     private readonly Func<string, bool> _isPathTaken;
 
     private readonly object _segmentsLock = new();
     private readonly List<Segment> _segments = [];
     private readonly HashSet<Segment> _owned = [];
-    private readonly object _saveLock = new();
 
     private PartFile? _part;
     private CancellationTokenSource? _stop;
@@ -46,9 +45,9 @@ internal sealed class DownloadJob
         Options = options;
         _http = http;
         _limits = limits;
-        _store = store;
         _log = log;
         _isPathTaken = isPathTaken;
+        _saver = new JobStateSaver(state, store, log, SnapshotSegments, () => _part);
     }
 
     public DownloadState State { get; }
@@ -231,7 +230,7 @@ internal sealed class DownloadJob
         _log.Info($"start {State.FileName}: {workerCount} connection(s), {State.TotalBytes?.ToString() ?? "?"} bytes");
 
         using var saverStop = new CancellationTokenSource();
-        var saver = SaveLoopAsync(saverStop.Token);
+        var saver = _saver.RunAsync(Options.StateSaveInterval, saverStop.Token);
 
         var workers = new Task[workerCount];
         for (var i = 0; i < workerCount; i++)
@@ -290,7 +289,7 @@ internal sealed class DownloadJob
     internal Segment RestartSingleStream()
     {
         var segment = new Segment(0, State.TotalBytes ?? long.MaxValue, 0);
-        lock (_saveLock)
+        _saver.WithoutSaves(() =>
         {
             try
             {
@@ -307,7 +306,7 @@ internal sealed class DownloadJob
                 _segments.Add(segment);
                 Interlocked.Exchange(ref _downloaded, 0);
             }
-        }
+        });
 
         return segment;
     }
@@ -394,56 +393,23 @@ internal sealed class DownloadJob
         }
     }
 
-    private async Task SaveLoopAsync(CancellationToken token)
-    {
-        using var timer = new PeriodicTimer(Options.StateSaveInterval);
-        try
-        {
-            while (await timer.WaitForNextTickAsync(token))
-                SaveState(DownloadStatus.Downloading, null);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
-
     /// <summary>
-    /// Positions are captured first (under the segment-list lock), then the data is flushed, then the state with
-    /// the captured positions is written — so the saved state is never ahead of the data on disk.
-    /// A run that ended before Prepare loaded the segments (pause or failure while probing) keeps the
-    /// previously saved State.Segments: an empty live list must never overwrite real progress.
+    /// Segment positions for the saver, taken under the segment-list lock. Null when this run has not loaded the
+    /// segments yet (pause or failure while probing): an empty live list must never overwrite real saved progress.
     /// </summary>
-    private void SaveState(DownloadStatus status, string? error)
+    private List<SegmentState>? SnapshotSegments()
     {
-        lock (_saveLock)
+        lock (_segmentsLock)
         {
-            List<SegmentState>? snapshot = null;
-            lock (_segmentsLock)
+            if (!_segmentsLoaded)
+                return null;
+            var snapshot = new List<SegmentState>(_segments.Count);
+            foreach (var s in _segments)
             {
-                if (_segmentsLoaded)
-                {
-                    snapshot = new List<SegmentState>(_segments.Count);
-                    foreach (var s in _segments)
-                    {
-                        var (start, end, position) = s.Snapshot();
-                        snapshot.Add(new SegmentState(start, end, position));
-                    }
-                }
+                var (start, end, position) = s.Snapshot();
+                snapshot.Add(new SegmentState(start, end, position));
             }
-
-            State.Status = status;
-            State.Error = error;
-            try
-            {
-                _part?.FlushToDisk();
-                if (snapshot is not null)
-                    State.Segments = snapshot;
-                _store.Save(State);
-            }
-            catch (Exception ex)
-            {
-                _log.Warn($"state: save failed for {State.FileName ?? State.CurrentUrl}: {ex.Message}");
-            }
+            return snapshot;
         }
     }
 
@@ -475,7 +441,7 @@ internal sealed class DownloadJob
     /// <summary>Final save with the outcome's status (data flushed first while the part file is open).</summary>
     private JobOutcome End(JobOutcome outcome)
     {
-        SaveState(outcome.Status, outcome.Error);
+        _saver.Save(outcome.Status, outcome.Error);
         return outcome;
     }
 
