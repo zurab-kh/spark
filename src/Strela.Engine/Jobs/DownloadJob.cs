@@ -36,6 +36,7 @@ internal sealed class DownloadJob
     private JobOutcome? _failure;
     private long _downloaded;
     private int _activeConnections;
+    private bool _segmentsLoaded;   // guarded by _segmentsLock; false until Prepare filled _segments
     private volatile string? _statusText;
 
     public DownloadJob(DownloadState state, EngineOptions options, HttpClient http, HostLimits limits,
@@ -74,6 +75,8 @@ internal sealed class DownloadJob
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _stop = stop;
         _failure = null;
+        lock (_segmentsLock)
+            _segmentsLoaded = false;
         try
         {
             var probe = await ProbeAsync(stop.Token);
@@ -196,6 +199,7 @@ internal sealed class DownloadJob
             foreach (var s in _segments)
                 downloaded += s.Position - s.Start;
             Interlocked.Exchange(ref _downloaded, downloaded);
+            _segmentsLoaded = true;
         }
     }
 
@@ -406,19 +410,24 @@ internal sealed class DownloadJob
     /// <summary>
     /// Positions are captured first (under the segment-list lock), then the data is flushed, then the state with
     /// the captured positions is written — so the saved state is never ahead of the data on disk.
+    /// A run that ended before Prepare loaded the segments (pause or failure while probing) keeps the
+    /// previously saved State.Segments: an empty live list must never overwrite real progress.
     /// </summary>
     private void SaveState(DownloadStatus status, string? error)
     {
         lock (_saveLock)
         {
-            List<SegmentState> snapshot;
+            List<SegmentState>? snapshot = null;
             lock (_segmentsLock)
             {
-                snapshot = new List<SegmentState>(_segments.Count);
-                foreach (var s in _segments)
+                if (_segmentsLoaded)
                 {
-                    var (start, end, position) = s.Snapshot();
-                    snapshot.Add(new SegmentState(start, end, position));
+                    snapshot = new List<SegmentState>(_segments.Count);
+                    foreach (var s in _segments)
+                    {
+                        var (start, end, position) = s.Snapshot();
+                        snapshot.Add(new SegmentState(start, end, position));
+                    }
                 }
             }
 
@@ -427,7 +436,8 @@ internal sealed class DownloadJob
             try
             {
                 _part?.FlushToDisk();
-                State.Segments = snapshot;
+                if (snapshot is not null)
+                    State.Segments = snapshot;
                 _store.Save(State);
             }
             catch (Exception ex)

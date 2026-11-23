@@ -135,8 +135,40 @@ public sealed class DownloadJobTests : IAsyncLifetime
 
         Assert.Equal(DownloadStatus.Paused, outcome.Status);
         Assert.Null(outcome.FinalPath);
+        AssertSavedStateMatchesData(job.State.Id, content);
+    }
 
-        var json = File.ReadAllBytes(Path.Combine(StateFolder, $"{job.State.Id:D}.json"));
+    [Fact]
+    public async Task Cancel_AfterSteal_SnapshotKeepsStolenTails()
+    {
+        // NoTail setup: one 1 MB/s data connection, the rest unlimited — the fast workers steal from the slow one.
+        var content = TestData.Random(32 * MB, 9);
+        var url = _server.AddFile("a.bin", content,
+            new ServeOptions(SlowConnectionCount: 2, SlowBytesPerSecond: OneMBps));
+
+        using var cts = new CancellationTokenSource();
+        var watcher = Task.Run(async () =>
+        {
+            while (!_log.Contains("Info", "split") && !cts.IsCancellationRequested)
+                await Task.Delay(5);
+            cts.Cancel();
+        });
+        var (job, outcome) = await RunJob(url, Options() with { ConnectionsPerFile = 4 }, cts.Token);
+        cts.Cancel();
+        await watcher;
+
+        Assert.Equal(DownloadStatus.Paused, outcome.Status);
+        var saved = AssertSavedStateMatchesData(job.State.Id, content);
+        Assert.True(saved.Segments.Count > 4, $"only {saved.Segments.Count} segments saved — stolen tails missing");
+    }
+
+    /// <summary>
+    /// Reads the saved JSON: every [Start, Position) in the .strela equals the original, something but not
+    /// everything was written, and the segments tile [0, total) exactly (no stolen tail lost).
+    /// </summary>
+    private DownloadState AssertSavedStateMatchesData(Guid id, byte[] content)
+    {
+        var json = File.ReadAllBytes(Path.Combine(StateFolder, $"{id:D}.json"));
         var saved = JsonSerializer.Deserialize<DownloadState>(json, new JsonSerializerOptions { Converters = { new JsonStringEnumConverter() } })!;
         Assert.Equal(DownloadStatus.Paused, saved.Status);
         Assert.NotEmpty(saved.Segments);
@@ -161,6 +193,35 @@ public sealed class DownloadJobTests : IAsyncLifetime
             cursor = s.End;
         }
         Assert.Equal(content.Length, cursor);
+        return saved;
+    }
+
+    [Fact]
+    public async Task Resume_EndingBeforePrepare_KeepsSavedSegments()
+    {
+        var content = TestData.Random(32 * MB, 10);
+        var url = _server.AddFile("a.bin", content, new ServeOptions(BytesPerSecondPerConnection: OneMBps));
+        var options = Options() with { ConnectionsPerFile = 4 };
+
+        using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            Assert.Equal(DownloadStatus.Paused, (await RunJob(url, options, cts.Token)).Outcome.Status);
+        var before = Assert.Single(new StateStore(StateFolder).LoadAll(_log)).Segments;
+        Assert.InRange(before.Sum(s => s.Position - s.Start), 1, content.Length - 1);
+
+        // Paused while probing (e.g. resumed while offline).
+        var job = NewJob(Assert.Single(new StateStore(StateFolder).LoadAll(_log)), options);
+        Assert.Equal(DownloadStatus.Paused, (await job.RunAsync(new CancellationToken(canceled: true))).Status);
+        var afterPause = Assert.Single(new StateStore(StateFolder).LoadAll(_log));
+        Assert.Equal(DownloadStatus.Paused, afterPause.Status);
+        Assert.Equal(before, afterPause.Segments);
+
+        // Fatal probe answer.
+        _server.SetOptions(url, new ServeOptions(FixedStatus: 404));
+        job = NewJob(afterPause, options);
+        Assert.Equal(DownloadStatus.Error, (await job.RunAsync(CancellationToken.None)).Status);
+        var afterError = Assert.Single(new StateStore(StateFolder).LoadAll(_log));
+        Assert.Equal(DownloadStatus.Error, afterError.Status);
+        Assert.Equal(before, afterError.Segments);
     }
 
     [Fact]
@@ -191,18 +252,34 @@ public sealed class DownloadJobTests : IAsyncLifetime
         var savedBytes = saved.Segments.Sum(s => s.Position - s.Start);
         Assert.InRange(savedBytes, 1, content.Length - 1);
 
+        // Mark one byte inside an already-saved range: a real continuation never fetches it again,
+        // a silent restart from scratch would overwrite it with the original.
+        var marked = saved.Segments.First(s => s.Position > s.Start).Start;
+        var marker = (byte)~content[marked];
+        using (var part = new FileStream(saved.PartPath!, FileMode.Open, FileAccess.Write))
+        {
+            part.Position = marked;
+            part.WriteByte(marker);
+        }
+
         _server.SetOptions(url, new ServeOptions());
-        var job = new DownloadJob(saved, options, _http, new HostLimits(), new StateStore(StateFolder), _log, _ => false);
+        var job = NewJob(saved, options);
         Assert.Equal(paused.State.Id, job.State.Id);
         var second = await job.RunAsync(CancellationToken.None);
 
         Assert.Equal(DownloadStatus.Completed, second.Status);
         Assert.Equal(Path.Combine(DownloadFolder, "a.bin"), second.FinalPath);
-        Assert.Equal(TestData.Sha256(content), TestData.Sha256(second.FinalPath!));
         Assert.Equal(content.Length, job.DownloadedBytes);
+        var result = File.ReadAllBytes(second.FinalPath!);
+        Assert.Equal(marker, result[marked]);                      // continued, not restarted
+        result[marked] = content[marked];
+        Assert.Equal(TestData.Sha256(content), TestData.Sha256(result));   // everything else exact
     }
 
     private EngineOptions Options() => new() { DownloadFolder = DownloadFolder, StateFolder = StateFolder };
+
+    private DownloadJob NewJob(DownloadState state, EngineOptions options) =>
+        new(state, options, _http, new HostLimits(), new StateStore(options.StateFolder), _log, _ => false);
 
     private async Task<(DownloadJob Job, JobOutcome Outcome)> RunJob(
         Uri url, EngineOptions? o = null, CancellationToken ct = default, Func<DownloadState, string, bool>? isTaken = null)
