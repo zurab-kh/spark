@@ -2,7 +2,7 @@ using Strela.Engine.Manager;
 
 namespace Strela.Engine.Storage;
 
-/// <summary>Состояние одного сегмента: диапазон [Start, End] и позиция, до которой данные уже записаны.</summary>
+/// <summary>Состояние одного сегмента: диапазон [Start, End) (End не включается, как у Segment) и позиция, до которой данные уже записаны.</summary>
 public sealed record SegmentState(long Start, long End, long Position);
 
 /// <summary>Всё, что нужно для возобновления загрузки после перезапуска. Сериализуется в JSON, поэтому свойства с get/set.</summary>

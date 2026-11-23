@@ -47,6 +47,12 @@ public sealed class Segment
 
     public bool IsDone { get { lock (_lock) return _position >= _end; } }
 
+    /// <summary>(Start, End, Position) read under one lock acquisition, so the three values belong together.</summary>
+    public (long Start, long End, long Position) Snapshot()
+    {
+        lock (_lock) return (Start, _end, _position);
+    }
+
     /// <summary>Bytes not yet reserved, i.e. the part that can still be split off.</summary>
     internal long Free { get { lock (_lock) return _end - _reserved; } }
 

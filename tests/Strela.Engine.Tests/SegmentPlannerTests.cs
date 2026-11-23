@@ -100,6 +100,19 @@ public class SegmentPlannerTests
     }
 
     [Fact]
+    public void Snapshot_IsCommittedPositionAndCurrentEnd()
+    {
+        var s = new Segment(0, 8 * MB, 0);
+        s.Reserve(300);
+        s.Commit(100);   // Reserved 300, Position 100
+        var tail = s.SplitOff(MB);
+        Assert.NotNull(tail);
+
+        Assert.Equal((0L, tail.Start, 100L), s.Snapshot());
+        Assert.Equal((tail.Start, 8 * MB, tail.Start), tail.Snapshot());
+    }
+
+    [Fact]
     public void Commit_BeyondReserved_Throws()
     {
         var s = new Segment(0, 1000, 0);
