@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Strela.App.Services;
+using Strela.Engine.Video;
 
 namespace Strela.App.Views;
 
@@ -32,7 +33,12 @@ public partial class SettingsWindow : Window
         AutostartCheck.IsChecked = current.StartWithWindows;
         BrowserCheck.IsChecked = current.InterceptBrowserDownloads;
         TorrentsCheck.IsChecked = current.HandleTorrents;
+        // Index = VideoQuality value.
+        VideoCombo.ItemsSource = VideoQualityNames;
+        VideoCombo.SelectedIndex = (int)current.VideoQuality;
     }
+
+    private static readonly string[] VideoQualityNames = ["Лучшее качество", "До 1080p", "До 720p", "Только звук (MP3)"];
 
     private async void Browse_Click(object? sender, RoutedEventArgs e)
     {
@@ -66,6 +72,7 @@ public partial class SettingsWindow : Window
             StartWithWindows = AutostartCheck.IsChecked == true,
             InterceptBrowserDownloads = BrowserCheck.IsChecked == true,
             HandleTorrents = TorrentsCheck.IsChecked == true,
+            VideoQuality = VideoCombo.SelectedIndex >= 0 ? (VideoQuality)VideoCombo.SelectedIndex : _current.VideoQuality,
         };
         _onSave(settings.Clamped());
         Close();

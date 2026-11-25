@@ -7,12 +7,14 @@ using Strela.Engine.Policies;
 using Strela.Engine.Probe;
 using Strela.Engine.Storage;
 using Strela.Engine.Torrents;
+using Strela.Engine.Video;
 
 namespace Strela.Engine.Manager;
 
 /// <summary>
 /// The download queue: at most <see cref="EngineOptions.MaxActiveDownloads"/> jobs run at once, FIFO by QueueOrder.
-/// Each run is a <see cref="DownloadJob"/> (a <see cref="TorrentJob"/> for magnet links and .torrent files) on the thread pool with its own <see cref="CancellationTokenSource"/>;
+/// Each run is a <see cref="DownloadJob"/> (a <see cref="TorrentJob"/> for magnet links and .torrent files, a <see cref="VideoJob"/>
+/// for YouTube) on the thread pool with its own <see cref="CancellationTokenSource"/>;
 /// cancelling it pauses the job, which saves its own state.
 /// <para>
 /// Status: an entry's <c>Status</c> is what the user sees and wants. While a job is stopping, it already shows the
@@ -41,6 +43,8 @@ public sealed class DownloadManager : IDownloadManager
     private readonly StateStore _store;
     private readonly HostLimits _limits = new();
     private readonly TorrentService _torrents;
+    private readonly VideoTools _videoTools;
+    private readonly ToolRunner _videoRunner;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private EngineOptions _options;
     private volatile bool _networkDown;
@@ -54,6 +58,8 @@ public sealed class DownloadManager : IDownloadManager
         _http = http ?? StrelaHttp.Create();
         _store = new StateStore(options.StateFolder);
         _torrents = new TorrentService(options, log);
+        _videoRunner = options.VideoRunner ?? ProcessRunner.RunAsync;
+        _videoTools = new VideoTools(options.ToolsFolder ?? Path.Combine(options.StateFolder, "tools"), _http, log, _videoRunner);
         _networkDown = !NetworkInterface.GetIsNetworkAvailable();
         NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
     }
@@ -120,6 +126,8 @@ public sealed class DownloadManager : IDownloadManager
         var url = request.Url;
         if (url.IsAbsoluteUri && TorrentLinks.IsTorrentRequest(request))
             return AddTorrent(request);
+        if (VideoLinks.TryGetYouTubeId(url, out var videoId))
+            return AddVideo(videoId);
         if (!url.IsAbsoluteUri || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps))
             throw new ArgumentException($"Not an http/https address: {url}", nameof(request));
 
@@ -156,6 +164,45 @@ public sealed class DownloadManager : IDownloadManager
         }
 
         _log.Info($"add {entry.State.Id}: {url}");
+        RequestSave(entry);
+        Pump();
+        return entry.State.Id;
+    }
+
+    /// <summary>
+    /// A YouTube video, by its canonical link. The same video that is still in progress, or done with its file still
+    /// on disk, is not added again.
+    /// </summary>
+    private Guid AddVideo(string videoId)
+    {
+        var key = VideoLinks.Canonical(videoId).AbsoluteUri;
+        Entry entry;
+        lock (_lock)
+        {
+            var existing = _list.Find(e => e.State.Kind == DownloadKind.Video && e.State.OriginalUrl == key &&
+                (e.Status is DownloadStatus.Queued or DownloadStatus.Downloading or DownloadStatus.Paused ||
+                 e.Status == DownloadStatus.Completed && e.State.FinalPath is { } done && File.Exists(done)));
+            if (existing is not null)
+                return existing.State.Id;
+
+            var state = new DownloadState
+            {
+                Id = Guid.NewGuid(),
+                Kind = DownloadKind.Video,
+                OriginalUrl = key,
+                CurrentUrl = key,
+                Folder = _options.DownloadFolder,
+                VideoQuality = _options.VideoQuality,
+                Status = DownloadStatus.Queued,
+                QueueOrder = _list.Count == 0 ? 0 : _list[^1].State.QueueOrder + 1,
+                AddedAt = DateTimeOffset.UtcNow,
+            };
+            entry = new Entry(state, DisplayName(state)) { Status = DownloadStatus.Queued };
+            _byId.Add(state.Id, entry);
+            _list.Add(entry);
+        }
+
+        _log.Info($"add video {entry.State.Id}: {key}");
         RequestSave(entry);
         Pump();
         return entry.State.Id;
@@ -345,6 +392,13 @@ public sealed class DownloadManager : IDownloadManager
                         DeleteFile(copy);
                     _torrents.Forget(e.State.InfoHash);
                 }
+                else if (e.State.Kind == DownloadKind.Video)
+                {
+                    // yt-dlp's .part files are ours (in the state folder): gone either way.
+                    DeleteFolder(VideoJob.TempFolder(_options, id));
+                    if (deleteFile)
+                        DeleteFile(e.State.FinalPath);
+                }
                 else if (deleteFile)
                 {
                     DeleteFile(e.State.PartPath);
@@ -375,7 +429,7 @@ public sealed class DownloadManager : IDownloadManager
         lock (_lock)
         {
             if (!_byId.TryGetValue(id, out e) || e.Updating || e.Status == DownloadStatus.Completed
-                || e.State.Kind == DownloadKind.Torrent)
+                || e.State.Kind is DownloadKind.Torrent or DownloadKind.Video)
                 return false;
             e.Updating = true;   // the scheduler leaves it alone until the update is applied
             run = e.Run;
@@ -566,9 +620,12 @@ public sealed class DownloadManager : IDownloadManager
     private void Start(Entry e)
     {
         var cts = new CancellationTokenSource();
-        IDownloadJob job = e.State.Kind == DownloadKind.Torrent
-            ? new TorrentJob(e.State, _options, _torrents, _http, _store, _log, hash => IsOtherTorrent(e, hash))
-            : new DownloadJob(e.State, _options, _http, _limits, _store, _log, path => IsPathTaken(e, path));
+        IDownloadJob job = e.State.Kind switch
+        {
+            DownloadKind.Torrent => new TorrentJob(e.State, _options, _torrents, _http, _store, _log, hash => IsOtherTorrent(e, hash)),
+            DownloadKind.Video => new VideoJob(e.State, _options, _videoTools, _videoRunner, _store, _log),
+            _ => new DownloadJob(e.State, _options, _http, _limits, _store, _log, path => IsPathTaken(e, path)),
+        };
         e.Job = job;
         e.Cts = cts;
         e.Running = true;
@@ -737,6 +794,19 @@ public sealed class DownloadManager : IDownloadManager
 
     private static bool Same(string fullPath, string? other) =>
         other is not null && string.Equals(fullPath, Path.GetFullPath(other), StringComparison.OrdinalIgnoreCase);
+
+    private void DeleteFolder(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _log.Warn($"cannot delete {path}: {ex.Message}");
+        }
+    }
 
     private void DeleteFile(string? path)
     {
@@ -939,6 +1009,13 @@ public sealed class DownloadManager : IDownloadManager
                 : "";
             return why.Length == 0;
         }
+        if (s.Kind == DownloadKind.Video)
+        {
+            why = s.Id == Guid.Empty ? "no id"
+                : !Uri.TryCreate(s.OriginalUrl, UriKind.Absolute, out var video) || !VideoLinks.IsYouTube(video) ? "not a video link"
+                : "";
+            return why.Length == 0;
+        }
 
         why = s.Id == Guid.Empty ? "no id"
             : s.Segments is null ? "no segments"
@@ -950,7 +1027,7 @@ public sealed class DownloadManager : IDownloadManager
 
     private static long DownloadedOf(DownloadState s)
     {
-        if (s.Kind == DownloadKind.Torrent)
+        if (s.Kind is DownloadKind.Torrent or DownloadKind.Video)
             return s.Status == DownloadStatus.Completed ? s.TotalBytes ?? s.BytesDone : s.BytesDone;
         if (s.Status == DownloadStatus.Completed)
             return s.TotalBytes ?? 0;
@@ -972,6 +1049,10 @@ public sealed class DownloadManager : IDownloadManager
                 ? FileNameResolver.Resolve(null, link)
                 : Path.GetFileNameWithoutExtension(s.OriginalUrl);
         }
+        if (s.Kind == DownloadKind.Video)
+            return Uri.TryCreate(s.OriginalUrl, UriKind.Absolute, out var video) && VideoLinks.TryGetYouTubeId(video, out var id)
+                ? $"Видео YouTube {id}"
+                : "Видео YouTube";
         if (!string.IsNullOrWhiteSpace(s.RequestedFileName))
             return FileNameResolver.Sanitize(s.RequestedFileName);
         return Uri.TryCreate(s.OriginalUrl, UriKind.Absolute, out var url) ? FileNameResolver.Resolve(null, url) : s.OriginalUrl;

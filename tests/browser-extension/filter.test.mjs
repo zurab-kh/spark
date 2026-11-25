@@ -1,7 +1,7 @@
 // Run: node --test tests/browser-extension
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldIntercept, baseName, isTorrent, fileNameFor } from '../../browser-extension/filter.js';
+import { shouldIntercept, baseName, isTorrent, fileNameFor, youtubeVideoId } from '../../browser-extension/filter.js';
 
 const now = Date.parse('2026-11-23T19:00:00Z');
 const fresh = (over = {}) => ({
@@ -78,4 +78,20 @@ test('fileNameFor gives torrents found by MIME a .torrent name', () => {
   assert.equal(fileNameFor({ url: 'https://a/dl.php?id=1', mime: 'application/x-bittorrent', filename: '' }), 'download.torrent');
   assert.equal(fileNameFor({ url: 'https://a/dl.php?id=1', mime: 'application/x-bittorrent', filename: 'C:\\d\\Movie.torrent' }), 'Movie.torrent');
   assert.equal(fileNameFor({ url: 'https://a/', mime: 'application/x-bittorrent' }), 'download.torrent');
+});
+
+test('YouTube video pages are recognised', () => {
+  assert.equal(youtubeVideoId('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PL1&t=42'), 'dQw4w9WgXcQ');
+  assert.equal(youtubeVideoId('https://youtu.be/dQw4w9WgXcQ?si=abc'), 'dQw4w9WgXcQ');
+  assert.equal(youtubeVideoId('https://m.youtube.com/shorts/aqz-KE-bpKQ'), 'aqz-KE-bpKQ');
+  assert.equal(youtubeVideoId('https://music.youtube.com/watch?v=jNQXAC9IVRw'), 'jNQXAC9IVRw');
+});
+
+test('other pages are not videos', () => {
+  assert.equal(youtubeVideoId('https://www.youtube.com/'), null);
+  assert.equal(youtubeVideoId('https://www.youtube.com/@channel/videos'), null);
+  assert.equal(youtubeVideoId('https://www.youtube.com/watch?v=short'), null);
+  assert.equal(youtubeVideoId('https://notyoutube.com/watch?v=dQw4w9WgXcQ'), null);
+  assert.equal(youtubeVideoId('chrome://extensions'), null);
+  assert.equal(youtubeVideoId(undefined), null);
 });

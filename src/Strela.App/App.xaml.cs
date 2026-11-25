@@ -7,6 +7,7 @@ using Strela.Engine;
 using Strela.Engine.Integration;
 using Strela.Engine.Manager;
 using Strela.Engine.Torrents;
+using Strela.Engine.Video;
 
 namespace Strela.App;
 
@@ -188,6 +189,13 @@ public partial class App : Application
             var title = TorrentLinks.MagnetName(line);
             _log?.Info("Буфер обмена: magnet-ссылка");
             ShowToast(title is null ? "Скачать торрент?" : $"Скачать торрент {title}?", () => _vm.AddLinks(line), "Скачать");
+            return;
+        }
+        if (VideoLinks.TryParse(line, out var video))
+        {
+            if (_vm.Contains(video.AbsoluteUri)) return;
+            _log?.Info($"Буфер обмена: видео {video.AbsoluteUri}");
+            ShowToast("Скачать видео с YouTube?", () => _vm.AddLinks(video.AbsoluteUri), "Скачать");
             return;
         }
         if (!FileUrlDetector.TryDetect(line, out var url)) return;

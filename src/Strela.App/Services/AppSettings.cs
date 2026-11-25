@@ -1,4 +1,5 @@
 using Strela.Engine;
+using Strela.Engine.Video;
 
 namespace Strela.App.Services;
 
@@ -15,6 +16,8 @@ public sealed record AppSettings
     public bool InterceptBrowserDownloads { get; init; } = true;   // расширение Chrome/Edge передаёт загрузки в Spark
     /// <summary>Spark — обработчик magnet: и .torrent в HKCU (при выключении ключи удаляются).</summary>
     public bool HandleTorrents { get; init; } = true;
+    /// <summary>Качество видео YouTube для новых загрузок.</summary>
+    public VideoQuality VideoQuality { get; init; } = VideoQuality.Best;
     /// <summary>Версия формата файла; 0 — файл старой версии (до автоподбора соединений). Пишется при сохранении.</summary>
     public int SettingsVersion { get; init; }
 
@@ -25,6 +28,7 @@ public sealed record AppSettings
         DownloadFolder = DownloadFolder ?? "",
         ConnectionsPerFile = Math.Clamp(ConnectionsPerFile, 0, MaxConnectionsPerFile),
         MaxActiveDownloads = Math.Clamp(MaxActiveDownloads, 1, 10),
+        VideoQuality = Enum.IsDefined(VideoQuality) ? VideoQuality : VideoQuality.Best,
     };
 
     public EngineOptions ToEngineOptions(string stateFolder)
@@ -36,6 +40,7 @@ public sealed record AppSettings
             StateFolder = stateFolder,
             ConnectionsPerFile = s.ConnectionsPerFile,
             MaxActiveDownloads = s.MaxActiveDownloads,
+            VideoQuality = s.VideoQuality,
         };
     }
 }

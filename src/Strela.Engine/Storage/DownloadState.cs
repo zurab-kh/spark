@@ -47,6 +47,11 @@ public sealed class DownloadState
     /// <summary>Скачано байт (проверенные куски) на момент последнего сохранения.</summary>
     public long BytesDone { get; set; }
 
+    // ---- видео (Kind = Video): OriginalUrl — каноническая ссылка https://www.youtube.com/watch?v=ID; BytesDone — скачано ----
+
+    /// <summary>Качество на момент добавления: докачка идёт тем же форматом (иначе .part-файлы не подойдут).</summary>
+    public Video.VideoQuality? VideoQuality { get; set; }
+
     public DownloadRequest ToRequest() =>
         new(new Uri(CurrentUrl), Referer, Headers, Cookies, RequestedFileName);
 }

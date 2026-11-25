@@ -59,11 +59,22 @@
             </Grid>
         </Border>
 
+        <Border Classes="card">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel>
+                    <TextBlock Text="Видео с YouTube" />
+                    <TextBlock Text="Вставьте ссылку на ролик. При первой загрузке Spark скачает yt-dlp, ffmpeg и deno (около 110 МБ)."
+                               Classes="hint" />
+                </StackPanel>
+                <ComboBox Grid.Column="1" x:Name="VideoCombo" MinWidth="190" Margin="12,0,0,0" VerticalAlignment="Center" />
+            </Grid>
+        </Border>
+
         <TextBlock Text="Поведение" Classes="section" />
         <Border Classes="card">
             <StackPanel>
                 <CheckBox x:Name="ClipboardCheck" Content="Следить за буфером обмена" />
-                <TextBlock Text="Скопировали ссылку на файл или magnet — Spark предложит скачать" Classes="hint" Margin="28,0,0,0" />
+                <TextBlock Text="Скопировали ссылку на файл, magnet или видео YouTube — Spark предложит скачать" Classes="hint" Margin="28,0,0,0" />
             </StackPanel>
         </Border>
         <Border Classes="card">

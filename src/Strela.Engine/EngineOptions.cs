@@ -1,4 +1,5 @@
 using System.Net;
+using Strela.Engine.Video;
 
 namespace Strela.Engine;
 
@@ -31,6 +32,17 @@ public sealed record EngineOptions
     public bool TorrentPortForwarding { get; init; } = true;
     /// <summary>A magnet link that gets no metadata in this time ends in Error.</summary>
     public TimeSpan TorrentMetadataTimeout { get; init; } = TimeSpan.FromMinutes(5);
+
+    // ---- video (YouTube through yt-dlp) ----
+
+    public VideoQuality VideoQuality { get; init; } = VideoQuality.Best;
+    /// <summary>yt-dlp, ffmpeg and deno, downloaded on the first YouTube link. null = "tools" in the state folder.</summary>
+    public string? ToolsFolder { get; init; }
+
+    /// <summary>Tests: use these tools, download nothing.</summary>
+    internal VideoToolPaths? VideoToolsOverride { get; init; }
+    /// <summary>Tests: runs yt-dlp instead of a real process.</summary>
+    internal ToolRunner? VideoRunner { get; init; }
 
     /// <summary>Tests: listen on this address only (null = every interface, IPv4 and IPv6).</summary>
     internal IPAddress? TorrentListenAddress { get; init; }

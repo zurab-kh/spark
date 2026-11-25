@@ -97,8 +97,19 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         SpeedText = downloading ? Format.Speed(s.BytesPerSecond) : "";
         EtaText = downloading ? Format.Eta(s.Eta) : "";
         PercentText = s.TotalBytes is > 0 ? $"{(int)(Progress * 100)}%" : "";
-        TypeLabel = s.Kind == DownloadKind.Torrent ? "TOR" : LabelFor(s.FileName);
-        BadgeKind = s.Kind == DownloadKind.Torrent ? "torrent" : KindFor(TypeLabel);
+        TypeLabel = s.Kind switch
+        {
+            DownloadKind.Torrent => "TOR",
+            // Пока видео качается, имя — заголовок ролика без расширения (в нём бывают точки): метка «YT».
+            DownloadKind.Video => s.Status == DownloadStatus.Completed ? LabelFor(s.FileName) : "YT",
+            _ => LabelFor(s.FileName),
+        };
+        BadgeKind = s.Kind switch
+        {
+            DownloadKind.Torrent => "torrent",
+            DownloadKind.Video => "media",
+            _ => KindFor(TypeLabel),
+        };
         DetailText = Detail(s);
         StatusLabel = s.Status switch
         {
@@ -132,7 +143,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
             DownloadStatus.Paused => $"Приостановлено · {done}",
             DownloadStatus.Error => s.StatusText ?? "Ошибка",
             // Торрент: «1.2 ГБ из 4.0 ГБ · 12 МБ/с · сиды 30 · пиры 12 · осталось 3:10».
-            _ when s.Kind == DownloadKind.Torrent =>
+            _ when s.Kind is DownloadKind.Torrent or DownloadKind.Video =>
                 Join(done, SpeedText, s.StatusText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}"),
             _ => Join(done, SpeedText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}", s.StatusText),
         };

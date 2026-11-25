@@ -54,3 +54,24 @@ export function baseName(path) {
   const name = path.split(/[\\/]/).pop();
   return name || null;
 }
+
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com']);
+const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+// The YouTube video a page shows (watch?v=, shorts/, live/, youtu.be/), or null. Mirrors Spark's VideoLinks.
+export function youtubeVideoId(raw) {
+  let url;
+  try { url = new URL(raw); } catch { return null; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  let id = null;
+  if (url.hostname === 'youtu.be') {
+    id = url.pathname.slice(1).split('/')[0];
+  } else if (YOUTUBE_HOSTS.has(url.hostname)) {
+    if (url.pathname === '/watch') id = url.searchParams.get('v');
+    else {
+      const m = url.pathname.match(/^\/(shorts|live|embed)\/([^/]+)/);
+      if (m) id = m[2];
+    }
+  }
+  return id && VIDEO_ID.test(id) ? id : null;
+}

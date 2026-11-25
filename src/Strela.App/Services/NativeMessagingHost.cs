@@ -91,7 +91,8 @@ public sealed class NativeMessagingHost
             if (root.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() == "ping")
                 return JsonSerializer.Serialize(new { ok = true, enabled = SafeIsEnabled(), v = ProtocolVersion });
 
-            if (!SafeIsEnabled()) return Fail("disabled");
+            // The switch is about intercepting browser downloads; a button the user pressed («explicit») always goes through.
+            if (!IsExplicit(root) && !SafeIsEnabled()) return Fail("disabled");
 
             if (!root.TryGetProperty("v", out var v) || v.ValueKind != JsonValueKind.Number || v.GetInt32() != ProtocolVersion)
             {
@@ -131,6 +132,9 @@ public sealed class NativeMessagingHost
         var age = _now() - started;
         return age <= MaxDownloadAge && age >= -MaxDownloadAge;
     }
+
+    private static bool IsExplicit(JsonElement root) =>
+        root.TryGetProperty("explicit", out var e) && e.ValueKind == JsonValueKind.True;
 
     private bool SafeIsEnabled()
     {
