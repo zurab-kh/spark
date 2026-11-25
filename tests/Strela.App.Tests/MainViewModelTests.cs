@@ -44,7 +44,7 @@ public class MainViewModelTests
         var (fake, vm) = ThreeDownloads();
         var prompts = new List<string>();
         var keptId = vm.Items[1].Id;
-        vm.ConfirmDelete = m => { prompts.Add(m); return true; };
+        vm.ConfirmDelete = m => { prompts.Add(m); return Task.FromResult(true); };
 
         await vm.RemoveSelectedWithFileCommand.ExecuteAsync(new List<object> { vm.Items[0], vm.Items[2] });
 
@@ -58,7 +58,7 @@ public class MainViewModelTests
     public async Task RemoveSelectedWithFile_Declined_RemovesNothing()
     {
         var (fake, vm) = ThreeDownloads();
-        vm.ConfirmDelete = _ => false;
+        vm.ConfirmDelete = _ => Task.FromResult(false);
 
         await vm.RemoveSelectedWithFileCommand.ExecuteAsync(vm.Items.Cast<object>().ToList());
 
@@ -84,7 +84,7 @@ public class MainViewModelTests
     {
         var (_, vm) = ThreeDownloads();
         string? prompt = null;
-        vm.ConfirmDelete = m => { prompt = m; return false; };
+        vm.ConfirmDelete = m => { prompt = m; return Task.FromResult(false); };
 
         await vm.RemoveSelectedWithFileCommand.ExecuteAsync(vm.Items.Take(count).Cast<object>().ToList());
 
@@ -233,7 +233,7 @@ public class MainViewModelTests
     {
         var fake = new FakeDownloadManager();
         fake.Snapshots.Add(Snap(Guid.NewGuid(), 0, DownloadStatus.Error));
-        var vm = new MainViewModel(fake) { GetClipboardText = () => "" };
+        var vm = new MainViewModel(fake) { GetClipboardText = () => Task.FromResult<string?>("") };
         vm.Refresh();
         await vm.UpdateUrlCommand.ExecuteAsync(vm.Items[0]);
         Assert.Equal("Скопируйте новую ссылку в буфер обмена", vm.InputHint);
@@ -246,7 +246,7 @@ public class MainViewModelTests
         var fake = new FakeDownloadManager();
         var id = Guid.NewGuid();
         fake.Snapshots.Add(Snap(id, 0, DownloadStatus.Error));
-        var vm = new MainViewModel(fake) { GetClipboardText = () => " https://new/x.bin " };
+        var vm = new MainViewModel(fake) { GetClipboardText = () => Task.FromResult<string?>(" https://new/x.bin ") };
         vm.Refresh();
         await vm.UpdateUrlCommand.ExecuteAsync(vm.Items[0]);
         Assert.Equal((id, new Uri("https://new/x.bin")), Assert.Single(fake.UrlUpdates));
@@ -259,13 +259,13 @@ public class MainViewModelTests
         var id = Guid.NewGuid();
         fake.Snapshots.Add(Snap(id, 0));
         var asked = 0;
-        var vm = new MainViewModel(fake) { ConfirmDelete = _ => { asked++; return false; } };
+        var vm = new MainViewModel(fake) { ConfirmDelete = _ => { asked++; return Task.FromResult(false); } };
         vm.Refresh();
         await vm.RemoveWithFileCommand.ExecuteAsync(vm.Items[0]);
         Assert.Equal(1, asked);
         Assert.Empty(fake.Removed);
 
-        vm.ConfirmDelete = _ => true;
+        vm.ConfirmDelete = _ => Task.FromResult(true);
         await vm.RemoveWithFileCommand.ExecuteAsync(vm.Items[0]);
         Assert.Equal((id, true), Assert.Single(fake.Removed));
         Assert.Empty(vm.Items);

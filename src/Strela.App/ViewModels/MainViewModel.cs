@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Collections.ObjectModel;
-using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Strela.App.Services;
@@ -30,7 +29,7 @@ public sealed partial class MainViewModel : ObservableObject
         RetryCommand = new RelayCommand<DownloadItemViewModel>(i => { if (i is not null) { _manager.Retry(i.Id); Refresh(); } });
         OpenFileCommand = new RelayCommand<DownloadItemViewModel>(OpenFile);
         OpenFolderCommand = new RelayCommand<DownloadItemViewModel>(i => { if (i is not null) Shell.RevealInFolder(i.FilePath); });
-        CopyUrlCommand = new RelayCommand<DownloadItemViewModel>(CopyUrl);
+        CopyUrlCommand = new AsyncRelayCommand<DownloadItemViewModel>(CopyUrlAsync);
         RemoveCommand = new AsyncRelayCommand<DownloadItemViewModel>(i => RemoveAsync(i, false));
         RemoveWithFileCommand = new AsyncRelayCommand<DownloadItemViewModel>(RemoveWithFileAsync);
         RemoveSelectedCommand = new AsyncRelayCommand<IEnumerable>(s => RemoveSelectedAsync(s, deleteFile: false));
@@ -61,11 +60,16 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Суммарная скорость активных загрузок, байт/с (для подсказки трея).</summary>
     public double TotalSpeed { get; private set; }
 
+    // Буфер обмена и окно подтверждения — свои у каждой платформы (MainViewModel.Windows.cs / .Mac.cs).
+
     /// <summary>Текст из буфера обмена для «Обновить ссылку».</summary>
-    public Func<string?> GetClipboardText { get; set; } = DefaultClipboardText;
+    public Func<Task<string?>> GetClipboardText { get; set; } = DefaultClipboardTextAsync;
+
+    /// <summary>Запись в буфер обмена («Копировать ссылку»).</summary>
+    public Func<string, Task> SetClipboardText { get; set; } = DefaultSetClipboardTextAsync;
 
     /// <summary>Подтверждение удаления с файлом. Единственное модальное окно в программе.</summary>
-    public Func<string, bool> ConfirmDelete { get; set; } = DefaultConfirmDelete;
+    public Func<string, Task<bool>> ConfirmDelete { get; set; } = DefaultConfirmDeleteAsync;
 
     public IRelayCommand AddFromInputCommand { get; }
     public IRelayCommand<DownloadItemViewModel> PauseCommand { get; }
@@ -207,10 +211,10 @@ public sealed partial class MainViewModel : ObservableObject
         if (!Shell.OpenFile(item.FilePath)) InputHint = "Файл не найден";
     }
 
-    private void CopyUrl(DownloadItemViewModel? item)
+    private async Task CopyUrlAsync(DownloadItemViewModel? item)
     {
         if (item is null) return;
-        try { Clipboard.SetText(item.Url); }
+        try { await SetClipboardText(item.Url); }
         catch { InputHint = "Не удалось скопировать: буфер обмена занят"; }
     }
 
@@ -247,7 +251,7 @@ public sealed partial class MainViewModel : ObservableObject
             var question = items.Count == 1
                 ? $"Удалить «{items[0].FileName}» вместе с файлом на диске?"
                 : $"Удалить {items.Count} {Plural(items.Count, "загрузку", "загрузки", "загрузок")} вместе с файлами на диске?";
-            if (!ConfirmDelete(question)) return;
+            if (!await ConfirmDelete(question)) return;
         }
         foreach (var item in items)
             await _manager.RemoveAsync(item.Id, deleteFile);
@@ -261,7 +265,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (item is null) return;
         string? text;
-        try { text = GetClipboardText(); }
+        try { text = await GetClipboardText(); }
         catch { text = null; }
         if (!LinkParser.TryParseHttp(FirstLine(text), out var url))
         {
@@ -275,13 +279,4 @@ public sealed partial class MainViewModel : ObservableObject
 
     private static string? FirstLine(string? text) =>
         text?.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
-
-    private static string? DefaultClipboardText()
-    {
-        try { return Clipboard.ContainsText() ? Clipboard.GetText() : null; }
-        catch { return null; }
-    }
-
-    private static bool DefaultConfirmDelete(string message) =>
-        MessageBox.Show(message, "Spark", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 }

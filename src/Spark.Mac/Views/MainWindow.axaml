@@ -1,0 +1,274 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:Strela.App.ViewModels"
+        xmlns:v="using:Strela.App.Views"
+        x:Class="Strela.App.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="Spark" Width="920" Height="580" MinWidth="560" MinHeight="360"
+        Background="{DynamicResource WindowBrush}"
+        DragDrop.AllowDrop="True">
+    <Window.Styles>
+        <!-- Карточка загрузки; ошибка — красная -->
+        <Style Selector="Border.card">
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Padding" Value="14,12" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource CardBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeBrush}" />
+        </Style>
+        <Style Selector="Border.card.error">
+            <Setter Property="Background" Value="#1FC42B1C" />
+            <Setter Property="BorderBrush" Value="#66C42B1C" />
+        </Style>
+
+        <Style Selector="ListBox#List">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox#List > ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        </Style>
+        <Style Selector="ListBox#List > ListBoxItem /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="10" />
+        </Style>
+        <Style Selector="ListBox#List > ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox#List > ListBoxItem:selected Border.card">
+            <Setter Property="BorderBrush" Value="#FF6A1A" />
+            <Setter Property="BorderThickness" Value="1.5" />
+        </Style>
+
+        <!-- Тонкая полоска прогресса: акцентная при загрузке, оранжевая на паузе -->
+        <Style Selector="ProgressBar.thin">
+            <Setter Property="Height" Value="4" />
+            <Setter Property="MinHeight" Value="4" />
+            <Setter Property="CornerRadius" Value="2" />
+            <Setter Property="Minimum" Value="0" />
+            <Setter Property="Maximum" Value="1" />
+            <Setter Property="Background" Value="{DynamicResource TrackBrush}" />
+            <Setter Property="Foreground" Value="{DynamicResource SparkGradient}" />
+        </Style>
+        <Style Selector="ProgressBar.thin.paused">
+            <Setter Property="Foreground" Value="{StaticResource PausedBrush}" />
+        </Style>
+
+        <!-- Тихая кнопка-значок -->
+        <Style Selector="Button.ghost">
+            <Setter Property="Width" Value="32" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="2,0,0,0" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Button.ghost:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource HoverBrush}" />
+        </Style>
+        <Style Selector="Button.ghost PathIcon">
+            <Setter Property="Width" Value="15" />
+            <Setter Property="Height" Value="15" />
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+        </Style>
+        <Style Selector="Button.ghost:pointerover PathIcon">
+            <Setter Property="Foreground" Value="{DynamicResource SystemControlForegroundBaseHighBrush}" />
+        </Style>
+        <Style Selector="Button.ghost.resume PathIcon">
+            <Setter Property="Foreground" Value="{StaticResource PausedBrush}" />
+        </Style>
+        <Style Selector="Button.ghost TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+        </Style>
+
+        <Style Selector="TextBlock.secondary">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+        </Style>
+        <Style Selector="TextBlock.status.done">
+            <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+        </Style>
+        <Style Selector="TextBlock.status.paused">
+            <Setter Property="Foreground" Value="{StaticResource PausedBrush}" />
+        </Style>
+        <Style Selector="TextBlock.tail.error">
+            <Setter Property="Foreground" Value="{StaticResource ErrorTextBrush}" />
+        </Style>
+        <Style Selector="TextBlock.percent.paused">
+            <Setter Property="Foreground" Value="{DynamicResource SecondaryTextBrush}" />
+        </Style>
+
+        <!-- Фирменная кнопка (класс не "accent": тот занят темой Fluent) -->
+        <Style Selector="Button.spark /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource SparkGradient}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="CornerRadius" Value="8" />
+        </Style>
+        <Style Selector="Button.spark:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource SparkGradient}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Opacity" Value="0.9" />
+        </Style>
+        <Style Selector="Button.spark:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="{StaticResource SparkGradient}" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="Opacity" Value="0.8" />
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="16,14,16,0">
+        <!-- Строка ввода ссылки -->
+        <Grid ColumnDefinitions="*,Auto">
+            <TextBox x:Name="InputBox" MinHeight="38" MaxHeight="110" Padding="12,9"
+                     AcceptsReturn="True" TextWrapping="NoWrap" CornerRadius="8"
+                     Watermark="Вставьте ссылку или magnet и нажмите Enter"
+                     AutomationProperties.Name="Ссылка для загрузки"
+                     Text="{Binding InputText}" />
+            <Button Grid.Column="1" Margin="8,0,0,0" MinHeight="38" Padding="18,0" VerticalAlignment="Top"
+                    VerticalContentAlignment="Center" Classes="spark" Cursor="Hand"
+                    Command="{Binding AddFromInputCommand}" ToolTip.Tip="Добавить ссылку (Enter)">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <PathIcon Width="14" Height="14" Data="{x:Static v:Icons.Download}" Foreground="White" />
+                    <TextBlock Text="Скачать" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <TextBlock Grid.Row="1" Text="{Binding InputHint}" IsVisible="{Binding InputHint, Converter={x:Static ObjectConverters.IsNotNull}}"
+                   Margin="4,6,0,0" FontSize="12" Foreground="{StaticResource ErrorTextBrush}" />
+
+        <!-- Список загрузок -->
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <ListBox x:Name="List" ItemsSource="{Binding Items}" SelectionMode="Multiple"
+                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                     AutomationProperties.Name="Загрузки">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="vm:DownloadItemViewModel">
+                        <Border Classes="card" Classes.error="{Binding IsError}">
+                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                <!-- Значок типа файла; у ошибки — предупреждение -->
+                                <Border Width="40" Height="40" Margin="0,0,14,0" CornerRadius="9" VerticalAlignment="Center"
+                                        Background="{Binding BadgeKind, Converter={x:Static v:Converters.BadgeBackground}}"
+                                        IsVisible="{Binding !IsError}">
+                                    <TextBlock Text="{Binding TypeLabel}" FontSize="10.5" FontWeight="Bold"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Foreground="{Binding BadgeKind, Converter={x:Static v:Converters.BadgeForeground}}" />
+                                </Border>
+                                <Border Width="40" Height="40" Margin="0,0,14,0" CornerRadius="9" VerticalAlignment="Center"
+                                        Background="#33C42B1C" IsVisible="{Binding IsError}">
+                                    <PathIcon Width="17" Height="17" Data="{x:Static v:Icons.Warning}" Foreground="#FF6B6B" />
+                                </Border>
+
+                                <!-- Имя, подробности, прогресс -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding FileName}" FontSize="14" FontWeight="SemiBold"
+                                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding FileName}" />
+                                    <Grid ColumnDefinitions="Auto,*" Margin="0,3,0,0" ToolTip.Tip="{Binding DetailText}">
+                                        <TextBlock Classes="secondary status" FontWeight="SemiBold" Text="{Binding StatusLabel}"
+                                                   Classes.done="{Binding IsCompleted}" Classes.paused="{Binding IsPaused}" />
+                                        <TextBlock Grid.Column="1" Classes="secondary tail" Text="{Binding DetailTail}"
+                                                   Classes.error="{Binding IsError}" TextTrimming="CharacterEllipsis" />
+                                    </Grid>
+                                    <ProgressBar Margin="0,9,0,0" Classes="thin" Classes.paused="{Binding IsPaused}"
+                                                 Value="{Binding Progress, Mode=OneWay}" IsVisible="{Binding ShowProgressBar}" />
+                                </StackPanel>
+
+                                <!-- Процент или галочка -->
+                                <Panel Grid.Column="2" Margin="18,0,6,0" MinWidth="44" VerticalAlignment="Center">
+                                    <TextBlock Classes="percent" Classes.paused="{Binding IsPaused}" Text="{Binding PercentText}"
+                                               FontSize="15" FontWeight="SemiBold" TextAlignment="Right"
+                                               IsVisible="{Binding ShowPercent}" />
+                                    <Border Width="22" Height="22" CornerRadius="11" HorizontalAlignment="Right"
+                                            Background="{StaticResource SuccessBrush}" IsVisible="{Binding IsCompleted}">
+                                        <PathIcon Width="12" Height="12" Data="{x:Static v:Icons.Check}" Foreground="White" />
+                                    </Border>
+                                </Panel>
+
+                                <!-- Действия -->
+                                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Classes="ghost" ToolTip.Tip="Пауза" AutomationProperties.Name="Пауза"
+                                            Click="Pause_Click" IsVisible="{Binding CanPause}">
+                                        <PathIcon Data="{x:Static v:Icons.Pause}" />
+                                    </Button>
+                                    <Button Classes="ghost resume" ToolTip.Tip="Продолжить" AutomationProperties.Name="Продолжить"
+                                            Click="Resume_Click" IsVisible="{Binding CanResume}">
+                                        <PathIcon Data="{x:Static v:Icons.Play}" />
+                                    </Button>
+                                    <Button Content="Повторить" Padding="14,5" Margin="4,0,0,0" Cursor="Hand"
+                                            AutomationProperties.Name="Повторить"
+                                            Click="Retry_Click" IsVisible="{Binding CanRetry}" />
+                                    <Button Classes="ghost" ToolTip.Tip="Открыть" AutomationProperties.Name="Открыть"
+                                            Click="Open_Click" IsVisible="{Binding IsCompleted}">
+                                        <PathIcon Data="{x:Static v:Icons.Open}" />
+                                    </Button>
+                                    <Button Classes="ghost" ToolTip.Tip="Показать в Finder" AutomationProperties.Name="Показать в Finder"
+                                            Click="Reveal_Click">
+                                        <PathIcon Data="{x:Static v:Icons.Folder}" />
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+                <ListBox.ContextMenu>
+                    <ContextMenu x:Name="ItemMenu">
+                        <MenuItem x:Name="MenuOpen" Header="Открыть" Click="MenuOpen_Click" />
+                        <MenuItem Header="Показать в Finder" Click="MenuReveal_Click" />
+                        <Separator />
+                        <MenuItem x:Name="MenuPause" Header="Пауза" Click="MenuPause_Click" />
+                        <MenuItem x:Name="MenuResume" Header="Продолжить" Click="MenuResume_Click" />
+                        <MenuItem x:Name="MenuRetry" Header="Повторить" Click="MenuRetry_Click" />
+                        <MenuItem Header="Обновить ссылку (из буфера обмена)" Click="MenuUpdateUrl_Click" />
+                        <MenuItem Header="Копировать ссылку" Click="MenuCopyUrl_Click" />
+                        <Separator />
+                        <MenuItem Header="Выше" Click="MenuUp_Click" />
+                        <MenuItem Header="Ниже" Click="MenuDown_Click" />
+                        <Separator />
+                        <MenuItem Header="Удалить из списка" InputGesture="Back" Click="MenuRemove_Click" />
+                        <MenuItem Header="Удалить вместе с файлом…" InputGesture="Shift+Back" Click="MenuRemoveWithFile_Click" />
+                        <Separator />
+                        <MenuItem Header="Выделить все" InputGesture="Cmd+A" Click="MenuSelectAll_Click" />
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+            </ListBox>
+
+            <!-- Пустое состояние -->
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
+                        IsVisible="{Binding !Items.Count}">
+                <Image Source="/Assets/spark-256.png" Width="64" Height="64" HorizontalAlignment="Center" />
+                <TextBlock Text="Загрузок пока нет" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0" />
+                <TextBlock FontSize="13" Margin="0,6,0,0" TextAlignment="Center" Classes="secondary"
+                           Text="Вставьте ссылку сверху, перетащите её в окно&#10;или просто скопируйте — Spark предложит скачать." />
+            </StackPanel>
+        </Grid>
+
+        <!-- Строка состояния -->
+        <Border Grid.Row="3" Margin="-16,10,-16,0" Padding="16,6" BorderThickness="0,1,0,0"
+                BorderBrush="{DynamicResource CardStrokeBrush}">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <PathIcon Width="12" Height="12" Data="{x:Static v:Icons.Download}" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,6,0" />
+                    <TextBlock Classes="secondary" Text="{Binding SpeedTotalText}" VerticalAlignment="Center" />
+                    <Ellipse Width="6" Height="6" Margin="16,0,6,0" VerticalAlignment="Center" Fill="#FF6A1A" />
+                    <TextBlock Classes="secondary" Text="{Binding ActiveText}" VerticalAlignment="Center" />
+                    <Ellipse Width="6" Height="6" Margin="16,0,6,0" VerticalAlignment="Center" Fill="{DynamicResource SecondaryTextBrush}" />
+                    <TextBlock Classes="secondary" Text="{Binding QueuedText}" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Grid.Column="1" Classes="ghost" Width="NaN" Padding="10,0" Click="Settings_Click"
+                        ToolTip.Tip="Настройки (Cmd+,)" AutomationProperties.Name="Настройки">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <PathIcon Width="13" Height="13" Data="{x:Static v:Icons.Gear}" />
+                        <TextBlock Text="Настройки" FontSize="12" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

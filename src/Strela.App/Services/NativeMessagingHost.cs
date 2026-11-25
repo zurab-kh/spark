@@ -181,9 +181,27 @@ public sealed class NativeMessagingHost
     {
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe)) return false;
+        // macOS: через LaunchServices (open -a Spark.app) — Spark не станет дочерним процессом host'а,
+        // которого браузер завершает, и не запустится второй копией рядом с уже открытой.
+        if (OperatingSystem.IsMacOS() && MacBundlePath(exe) is { } bundle)
+        {
+            Process.Start(new ProcessStartInfo("/usr/bin/open") { ArgumentList = { "-a", bundle } })?.Dispose();
+            return true;
+        }
         // ShellExecute: Spark не наследует каналы stdin/stdout браузера и живёт дольше host'а.
         Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(exe) ?? "" })?.Dispose();
         return true;
+    }
+
+    /// <summary>…/Spark.app/Contents/MacOS/Spark → …/Spark.app; null, если exe не внутри .app.</summary>
+    internal static string? MacBundlePath(string exe)
+    {
+        var macOs = Path.GetDirectoryName(exe);
+        var contents = macOs is null ? null : Path.GetDirectoryName(macOs);
+        var bundle = contents is null ? null : Path.GetDirectoryName(contents);
+        return bundle is not null && bundle.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
+               && Path.GetFileName(macOs) == "MacOS" && Path.GetFileName(contents) == "Contents"
+            ? bundle : null;
     }
 
     private static string Fail(string error) => JsonSerializer.Serialize(new { ok = false, error });

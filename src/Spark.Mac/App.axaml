@@ -1,0 +1,48 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Strela.App.App"
+             Name="Spark"
+             RequestedThemeVariant="Default">
+    <Application.Styles>
+        <FluentTheme />
+    </Application.Styles>
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- Цвета Spark: те же, что в Windows-версии. -->
+            <SolidColorBrush x:Key="PausedBrush" Color="#F7630C" />
+            <SolidColorBrush x:Key="SuccessBrush" Color="#22C55E" />
+            <SolidColorBrush x:Key="ErrorTextBrush" Color="#FF6B6B" />
+            <LinearGradientBrush x:Key="SparkGradient" StartPoint="0%,0%" EndPoint="100%,100%">
+                <GradientStop Offset="0" Color="#FFB300" />
+                <GradientStop Offset="0.5" Color="#FF6A1A" />
+                <GradientStop Offset="1" Color="#FF2D7A" />
+            </LinearGradientBrush>
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="CardBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="CardStrokeBrush" Color="#14000000" />
+                    <SolidColorBrush x:Key="WindowBrush" Color="#F5F5F7" />
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#6E6E73" />
+                    <SolidColorBrush x:Key="TrackBrush" Color="#1F000000" />
+                    <SolidColorBrush x:Key="HoverBrush" Color="#0F000000" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="CardBrush" Color="#2A2A2D" />
+                    <SolidColorBrush x:Key="CardStrokeBrush" Color="#1AFFFFFF" />
+                    <SolidColorBrush x:Key="WindowBrush" Color="#1E1E20" />
+                    <SolidColorBrush x:Key="SecondaryTextBrush" Color="#A1A1A6" />
+                    <SolidColorBrush x:Key="TrackBrush" Color="#2EFFFFFF" />
+                    <SolidColorBrush x:Key="HoverBrush" Color="#14FFFFFF" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+    <!-- Меню приложения в строке меню macOS (Скрыть и Завершить macOS добавит сама). -->
+    <NativeMenu.Menu>
+        <NativeMenu>
+            <NativeMenuItem Header="Настройки…" Gesture="Cmd+OemComma" Click="Settings_Click" />
+        </NativeMenu>
+    </NativeMenu.Menu>
+</Application>

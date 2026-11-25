@@ -1,0 +1,42 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:v="using:Strela.App.Views"
+        x:Class="Strela.App.Views.ToastWindow"
+        SystemDecorations="None" Topmost="True" ShowActivated="False" ShowInTaskbar="False"
+        CanResize="False" SizeToContent="WidthAndHeight" MinWidth="340" MaxWidth="440"
+        WindowStartupLocation="Manual" Background="Transparent"
+        TransparencyLevelHint="Transparent">
+    <Border CornerRadius="12" BorderThickness="1" Margin="8" ClipToBounds="True"
+            Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource CardStrokeBrush}"
+            BoxShadow="0 4 18 0 #66000000">
+        <Grid ColumnDefinitions="4,*">
+            <!-- Фирменная полоса Spark слева -->
+            <Border>
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                        <GradientStop Offset="0" Color="#FFB300" />
+                        <GradientStop Offset="0.5" Color="#FF6A1A" />
+                        <GradientStop Offset="1" Color="#FF2D7A" />
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+            <Grid Grid.Column="1" ColumnDefinitions="Auto,*,Auto" Margin="14,12,10,14">
+                <Image Source="/Assets/spark-256.png" Width="28" Height="28" VerticalAlignment="Top" Margin="0,2,12,0" />
+                <StackPanel Grid.Column="1">
+                    <TextBlock Text="Spark" FontSize="12" FontWeight="SemiBold" />
+                    <TextBlock x:Name="MessageText" TextWrapping="Wrap" FontSize="13" Margin="0,2,0,0"
+                               Foreground="{DynamicResource SecondaryTextBrush}" />
+                    <Button x:Name="ActionButton" Margin="0,12,0,0" Padding="18,6" HorizontalAlignment="Left"
+                            Background="{StaticResource SparkGradient}" Foreground="White" CornerRadius="7"
+                            Cursor="Hand" IsVisible="False" Click="ActionButton_Click" />
+                </StackPanel>
+                <Button Grid.Column="2" Width="26" Height="26" Padding="0" Margin="8,-4,-4,0" VerticalAlignment="Top"
+                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                        HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                        ToolTip.Tip="Закрыть" AutomationProperties.Name="Закрыть" Click="Close_Click">
+                    <PathIcon Width="10" Height="10" Data="{x:Static v:Icons.Close}" Foreground="{DynamicResource SecondaryTextBrush}" />
+                </Button>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
