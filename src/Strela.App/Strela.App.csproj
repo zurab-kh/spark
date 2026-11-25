@@ -29,9 +29,7 @@
 
   <ItemGroup>
     <!-- Расширение браузера едет рядом со Spark.exe (build и dotnet publish). -->
-    <Content Include="..\..\browser-extension\**\*"
-             Link="browser-extension\%(RecursiveDir)%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\browser-extension\**\*" Link="browser-extension\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>
@@ -47,6 +45,7 @@
 
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
 </Project>

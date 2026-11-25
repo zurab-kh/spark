@@ -1,0 +1,127 @@
+# Выпуск Spark: собирает Windows и macOS (Apple Silicon, Intel), упаковывает их Velopack и выкладывает в
+# публичный репозиторий zurab-kh/spark-releases, откуда установленный Spark обновляется сам.
+#
+#   git tag v1.4.1 && git push origin v1.4.1     → сборка и выпуск 1.4.1
+#   Actions → Release → Run workflow              → сборка без выпуска (publish выключен) или с ним
+#
+# Нужен секрет RELEASES_TOKEN: токен GitHub с правом Contents: Read and write на zurab-kh/spark-releases.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Версия, например 1.4.1
+        required: true
+      publish:
+        description: Выложить в spark-releases
+        type: boolean
+        default: false
+
+env:
+  RELEASES_REPO: https://github.com/zurab-kh/spark-releases
+  PACK_ID: SparkDownloader
+  VPK_VERSION: 1.2.161
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          INPUT: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then v="${GITHUB_REF_NAME#v}"; else v="$INPUT"; fi
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "Версия должна быть вида 1.2.3, а не '$v'"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet tool install -g vpk --version $env:VPK_VERSION
+      - run: dotnet publish src/Strela.App -c Release -r win-x64 --self-contained -p:PublishReadyToRun=true -p:Version=$env:VERSION -o publish/win
+      - name: Previous version (for small delta updates)
+        continue-on-error: true
+        run: vpk download github --repoUrl $env:RELEASES_REPO --channel win -o releases
+      - run: >
+          vpk pack --packId $env:PACK_ID --packVersion $env:VERSION --packDir publish/win --mainExe Spark.exe
+          --packTitle Spark --packAuthors Spark --icon src/Strela.App/Assets/spark.ico --channel win --outputDir releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win
+          path: releases/
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - rid: osx-arm64
+            label: AppleSilicon
+          - rid: osx-x64
+            label: Intel
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+      - run: dotnet tool install -g vpk --version $VPK_VERSION
+      - run: dotnet publish src/Spark.Mac -c Release -r ${{ matrix.rid }} --self-contained -p:UseAppHost=true -p:Version=$VERSION -o release/mac-build/${{ matrix.rid }}
+      - name: Spark.app (Info.plist, icon, browser extension)
+        run: SPARK_VERSION=$VERSION python3 tools/mac/package.py ${{ matrix.label }}
+      - name: Ad-hoc signature (not notarized)
+        run: codesign --force --deep --sign - release/mac/${{ matrix.label }}/Spark.app
+      - name: Previous version (for small delta updates)
+        continue-on-error: true
+        run: vpk download github --repoUrl $RELEASES_REPO --channel ${{ matrix.rid }} -o releases
+      - run: >
+          vpk pack --packId $PACK_ID --packVersion $VERSION --packDir release/mac/${{ matrix.label }}/Spark.app --mainExe Spark
+          --packTitle Spark --packAuthors Spark --icon src/Spark.Mac/macos/spark.icns --channel ${{ matrix.rid }} --outputDir releases
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}
+          path: releases/
+          if-no-files-found: error
+
+  publish:
+    needs: [version, windows, macos]
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet tool install -g vpk --version $env:VPK_VERSION
+      - uses: actions/download-artifact@v4
+        with:
+          path: releases
+      # macOS first, Windows last: every upload goes into the same GitHub release.
+      - name: Upload
+        env:
+          TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if (-not $env:TOKEN) { throw "Нет секрета RELEASES_TOKEN" }
+          foreach ($channel in 'osx-arm64', 'osx-x64', 'win') {
+            vpk upload github --repoUrl $env:RELEASES_REPO --token $env:TOKEN --channel $channel --outputDir "releases/$channel" `
+              --tag "v$env:VERSION" --releaseName "Spark $env:VERSION" --merge --publish
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

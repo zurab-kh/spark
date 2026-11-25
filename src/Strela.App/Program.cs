@@ -12,6 +12,7 @@ public static class Program
     public static int Main(string[] args)
     {
         if (NativeMessagingHost.IsNativeHostLaunch(args)) return NativeMessagingHost.RunFromProcess();
+        AppUpdater.RunHooks();
 
         var app = new App();
         app.InitializeComponent();

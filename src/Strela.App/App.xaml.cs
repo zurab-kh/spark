@@ -32,6 +32,7 @@ public partial class App : Application
     private ClipboardWatcher? _clipboard;
     private UiLagMonitor? _lag;
     private ISingleInstanceChannel? _channel;
+    private AppUpdater? _updater;
     private bool _exiting;
 
     public App()
@@ -103,6 +104,10 @@ public partial class App : Application
             ShowWindow();
         });
         _channel.Start();
+        _updater = new AppUpdater(_log);
+        _updater.UpdateReady += version => Dispatcher.InvokeAsync(() =>
+            ShowToast($"Новая версия Spark {version} загружена", RestartForUpdate, "Перезапустить"));
+        _updater.Start();
         RegisterBrowserHost();
         ApplyTorrentAssociation(_settings.HandleTorrents);
 
@@ -170,6 +175,12 @@ public partial class App : Application
         Shutdown();
     }
 
+    /// <summary>Поставить скачанную версию: Spark закрывается как обычно (загрузки сохраняются) и запускается новым.</summary>
+    private void RestartForUpdate()
+    {
+        if (_updater?.ApplyAfterExit(restart: true) == true) _ = ExitAsync();
+    }
+
     private void DisposeManager()
     {
         if (_manager is null || _managerDisposed) return;
@@ -228,7 +239,7 @@ public partial class App : Application
             _settingsWindow.Activate();
             return;
         }
-        var w = new SettingsWindow(_settings, ApplySettings) { Owner = _window };
+        var w = new SettingsWindow(_settings, ApplySettings, _updater, RestartForUpdate) { Owner = _window };
         w.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow = w;
         w.Show();
@@ -249,6 +260,8 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         DisposeManager();
+        _updater?.ApplyAfterExit(restart: false);   // скачанная, но не поставленная версия ставится сейчас
+        _updater?.Dispose();
         _lag?.Dispose();
         _clipboard?.Dispose();
         _channel?.Dispose();

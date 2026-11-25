@@ -8,7 +8,6 @@
     <AssemblyName>Spark</AssemblyName>
     <Product>Spark</Product>
     <Company>Spark</Company>
-    <Version>1.3.0</Version>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon />
@@ -27,6 +26,7 @@
     <PackageReference Include="Avalonia.Desktop" Version="11.3.23" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.23" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
   <!-- Общий с Windows-версией код (без WPF и реестра). -->
@@ -34,6 +34,7 @@
     <Compile Include="..\Strela.App\ViewModels\DownloadItemViewModel.cs" Link="Shared\DownloadItemViewModel.cs" />
     <Compile Include="..\Strela.App\ViewModels\MainViewModel.cs" Link="Shared\MainViewModel.cs" />
     <Compile Include="..\Strela.App\Services\AppSettings.cs" Link="Shared\AppSettings.cs" />
+    <Compile Include="..\Strela.App\Services\AppUpdater.cs" Link="Shared\AppUpdater.cs" />
     <Compile Include="..\Strela.App\Services\FileLog.cs" Link="Shared\FileLog.cs" />
     <Compile Include="..\Strela.App\Services\Format.cs" Link="Shared\Format.cs" />
     <Compile Include="..\Strela.App\Services\ISingleInstanceChannel.cs" Link="Shared\ISingleInstanceChannel.cs" />
@@ -51,9 +52,7 @@
 
   <ItemGroup>
     <!-- Расширение браузера едет внутри Spark.app (Contents/MacOS/browser-extension). -->
-    <Content Include="..\..\browser-extension\**\*"
-             Link="browser-extension\%(RecursiveDir)%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\browser-extension\**\*" Link="browser-extension\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

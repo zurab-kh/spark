@@ -12,15 +12,20 @@ public partial class SettingsWindow : Window
 {
     private readonly AppSettings _current;
     private readonly Action<AppSettings> _onSave;
+    private readonly AppUpdater? _updater;
+    private readonly Action? _restartForUpdate;
 
     /// <summary>Только для дизайнера XAML.</summary>
     public SettingsWindow() : this(new AppSettings(), _ => { }) { }
 
-    public SettingsWindow(AppSettings current, Action<AppSettings> onSave)
+    public SettingsWindow(AppSettings current, Action<AppSettings> onSave, AppUpdater? updater = null, Action? restartForUpdate = null)
     {
         _current = current;
         _onSave = onSave;
+        _updater = updater;
+        _restartForUpdate = restartForUpdate;
         InitializeComponent();
+        ShowUpdateState();
         FolderBox.Text = current.DownloadFolder;
         // Index = value: 0 is auto, 1..32 a fixed count.
         var choices = new List<string> { "Авто (рекомендуется)" };
@@ -77,6 +82,29 @@ public partial class SettingsWindow : Window
         _onSave(settings.Clamped());
         Close();
     }
+
+    private void ShowUpdateState()
+    {
+        VersionText.Text = _updater is null ? "Spark" : $"Spark {_updater.CurrentVersion}";
+        if (_updater is { ReadyVersion: { } ready })
+            UpdateText.Text = $"Версия {ready} загружена: перезапустите Spark";
+        else if (_updater is { IsEnabled: false })
+            UpdateText.Text = "Обновления работают в Spark, установленном из выпуска на GitHub";
+        RestartButton.IsVisible = _updater?.ReadyVersion is not null;
+        CheckButton.IsEnabled = _updater?.IsEnabled == true;
+    }
+
+    private async void Check_Click(object? sender, RoutedEventArgs e)
+    {
+        if (_updater is null) return;
+        CheckButton.IsEnabled = false;
+        UpdateText.Text = "Проверяю…";
+        var result = await _updater.CheckAsync();
+        ShowUpdateState();
+        UpdateText.Text = result;
+    }
+
+    private void Restart_Click(object? sender, RoutedEventArgs e) => _restartForUpdate?.Invoke();
 
     private void Close_Click(object? sender, RoutedEventArgs e) => Close();
 }

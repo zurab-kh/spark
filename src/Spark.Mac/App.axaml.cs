@@ -41,6 +41,7 @@ public partial class App : Application
     private NativeMenuItem? _traySpeed;
     private ClipboardPoller? _clipboard;
     private ISingleInstanceChannel? _channel;
+    private AppUpdater? _updater;
     private bool _exiting;
 
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
@@ -119,6 +120,10 @@ public partial class App : Application
             ShowWindow();
         });
         _channel.Start();
+        _updater = new AppUpdater(_log);
+        _updater.UpdateReady += version => Dispatcher.UIThread.Post(() =>
+            ShowToast($"Новая версия Spark {version} загружена", RestartForUpdate, "Перезапустить"));
+        _updater.Start();
         RegisterWithMacOs();
 
         args.AddRange(_pendingLinks);
@@ -250,6 +255,12 @@ public partial class App : Application
         _desktop?.Shutdown();
     }
 
+    /// <summary>Поставить скачанную версию: Spark закрывается как обычно (загрузки сохраняются) и запускается новым.</summary>
+    private void RestartForUpdate()
+    {
+        if (_updater?.ApplyAfterExit(restart: true) == true) _ = ExitAsync();
+    }
+
     private void DisposeManager()
     {
         if (_manager is not null && !_managerDisposed)
@@ -263,6 +274,8 @@ public partial class App : Application
 
     private void Cleanup()
     {
+        _updater?.ApplyAfterExit(restart: false);   // скачанная, но не поставленная версия ставится сейчас
+        _updater?.Dispose();
         _clipboard?.Dispose();
         _channel?.Dispose();
         _tray?.Dispose();
@@ -330,7 +343,7 @@ public partial class App : Application
             return;
         }
         ShowWindow();
-        var w = new SettingsWindow(_settings, ApplySettings);
+        var w = new SettingsWindow(_settings, ApplySettings, _updater, RestartForUpdate);
         w.Closed += (_, _) => _settingsWindow = null;
         _settingsWindow = w;
         w.Show(_window);

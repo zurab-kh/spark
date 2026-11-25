@@ -4,5 +4,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
+    <!-- Версия приложений; сборка выпуска (GitHub Actions) берёт её из тега v1.2.3. -->
+    <Version>1.4.0</Version>
   </PropertyGroup>
 </Project>

@@ -10,7 +10,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "1.3.0"
+VERSION = os.environ.get("SPARK_VERSION", "1.4.0")   # the release workflow passes the tag's version
 TARGETS = [("osx-arm64", "AppleSilicon"), ("osx-x64", "Intel")]
 
 INFO_PLIST = f"""<?xml version="1.0" encoding="UTF-8"?>

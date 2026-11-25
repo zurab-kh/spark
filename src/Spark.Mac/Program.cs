@@ -13,6 +13,7 @@ public static class Program
     public static int Main(string[] args)
     {
         if (NativeMessagingHost.IsNativeHostLaunch(args)) return NativeMessagingHost.RunFromProcess();
+        AppUpdater.RunHooks();
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, Avalonia.Controls.ShutdownMode.OnExplicitShutdown);
     }
 
