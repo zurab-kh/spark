@@ -47,8 +47,8 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
       - run: dotnet tool install -g vpk --version $env:VPK_VERSION
@@ -59,7 +59,7 @@ jobs:
       - run: >
           vpk pack --packId $env:PACK_ID --packVersion $env:VERSION --packDir publish/win --mainExe Spark.exe
           --packTitle Spark --packAuthors Spark --icon src/Strela.App/Assets/spark.ico --channel win --outputDir releases
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: win
           path: releases/
@@ -78,8 +78,8 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
       - run: dotnet tool install -g vpk --version $VPK_VERSION
@@ -94,7 +94,7 @@ jobs:
       - run: >
           vpk pack --packId $PACK_ID --packVersion $VERSION --packDir release/mac/${{ matrix.label }}/Spark.app --mainExe Spark
           --packTitle Spark --packAuthors Spark --icon src/Spark.Mac/macos/spark.icns --channel ${{ matrix.rid }} --outputDir releases
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.rid }}
           path: releases/
@@ -107,11 +107,11 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
       - run: dotnet tool install -g vpk --version $env:VPK_VERSION
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: releases
       # macOS first, Windows last: every upload goes into the same GitHub release.
