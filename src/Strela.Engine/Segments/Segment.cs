@@ -16,6 +16,7 @@ public sealed class Segment
     private long _end;
     private long _position;
     private long _reserved;
+    private double _bytesPerSecond;
 
     /// <param name="end">Exclusive.</param>
     public Segment(long start, long end, long position)
@@ -51,6 +52,13 @@ public sealed class Segment
     public (long Start, long End, long Position) Snapshot()
     {
         lock (_lock) return (Start, _end, _position);
+    }
+
+    /// <summary>Speed of the connection that owns the segment, as last measured; 0 = not measured yet.</summary>
+    public double BytesPerSecond
+    {
+        get => Volatile.Read(ref _bytesPerSecond);
+        set => Volatile.Write(ref _bytesPerSecond, value);
     }
 
     /// <summary>Bytes not yet reserved, i.e. the part that can still be split off.</summary>

@@ -387,4 +387,29 @@ public class SegmentPlannerTests
 
         return steals;
     }
+
+    [Fact]
+    public void Steal_SkipsTailsTheOwnerFinishesSoon()
+    {
+        // 8 MB free each. a: 100 MB/s, done in 0.08 s; b: 1 MB/s, 8 s. Only b is worth a new request.
+        var a = new Segment(0, 8 * MB, 0) { BytesPerSecond = 100 * MB };
+        var b = new Segment(8 * MB, 16 * MB, 8 * MB) { BytesPerSecond = MB };
+
+        var stolen = SegmentPlanner.Steal(new[] { a, b }, MB, minOwnerSeconds: 2);
+
+        Assert.NotNull(stolen);
+        Assert.Equal(12 * MB, stolen!.Start);
+        Assert.Equal(8 * MB, a.End);
+
+        b.BytesPerSecond = 100 * MB;
+        Assert.Null(SegmentPlanner.Steal(new[] { a, b }, MB, minOwnerSeconds: 2));
+    }
+
+    [Fact]
+    public void Steal_UnmeasuredOwner_UsesBytesOnly()
+    {
+        var a = new Segment(0, 8 * MB, 0);   // BytesPerSecond 0: just started
+
+        Assert.NotNull(SegmentPlanner.Steal(new[] { a }, MB, minOwnerSeconds: 2));
+    }
 }

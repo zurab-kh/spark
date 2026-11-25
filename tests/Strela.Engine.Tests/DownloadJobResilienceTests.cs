@@ -269,6 +269,75 @@ public sealed class DownloadJobResilienceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BrowserAgentDropped_RetriesAsSparkAndKeepsIt()
+    {
+        // Bot protection that drops "Chrome" without a browser's TLS (fsn1-speed.hetzner.com does that).
+        var content = TestData.Random(8 * MB, 33);
+        var url = _server.AddFile("a.bin", content, new ServeOptions(DropBrowserAgents: true));
+        var options = Options() with { ConnectionsPerFile = 4 };
+
+        var clock = Stopwatch.StartNew();
+        var (_, outcome) = await Run(NewState(url), options);
+        clock.Stop();
+
+        Assert.Equal(DownloadStatus.Completed, outcome.Status);
+        Assert.Equal(TestData.Sha256(content), TestData.Sha256(outcome.FinalPath!));
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(5), $"took {clock.Elapsed}: the switch waited for a backoff");
+        Assert.Equal(StrelaHttp.HonestUserAgent, LoadSaved().Headers!["User-Agent"]);   // resumes keep it
+        Assert.StartsWith("Spark/", StrelaHttp.HonestUserAgent);
+    }
+
+    [Fact]
+    public async Task OwnUserAgent_IsNeverReplaced()
+    {
+        // The browser extension sends the browser's own agent: Spark must not swap it for its own.
+        var url = _server.AddFile("a.bin", TestData.Random(MB, 34), new ServeOptions(DropBrowserAgents: true));
+        var state = NewState(url);
+        state.Headers = new() { ["User-Agent"] = "Mozilla/5.0 (real browser)" };
+        var options = Options() with { ConnectionsPerFile = 1, GiveUpAfter = TimeSpan.FromSeconds(2) };
+
+        var (_, outcome) = await Run(state, options);
+
+        Assert.Equal(DownloadStatus.Error, outcome.Status);
+        Assert.False(LogHas("trying Spark/"));
+        Assert.Equal("Mozilla/5.0 (real browser)", state.Headers["User-Agent"]);
+    }
+
+    [Fact]
+    public async Task ServerDown_HonestAgentTriedOnceThenBrowserAgentBack()
+    {
+        // Nothing listens: both agents fail. One extra attempt as Spark, then the browser agent again.
+        var server = await TestFileServer.StartAsync();
+        var url = server.AddFile("a.bin", TestData.Random(MB, 35));
+        await server.DisposeAsync();
+        var state = NewState(url);
+        var options = Options() with { ConnectionsPerFile = 1, GiveUpAfter = TimeSpan.FromSeconds(2) };
+
+        var (_, outcome) = await Run(state, options);
+
+        Assert.Equal(DownloadStatus.Error, outcome.Status);
+        Assert.Equal(1, _log.Entries.Count(e => e.Message.Contains("trying Spark/", StringComparison.Ordinal)));
+        Assert.False(LogHas("using Spark/"));
+        Assert.True(state.Headers is null || !state.Headers.ContainsKey("User-Agent"));
+    }
+
+    [Fact]
+    public async Task NoProgress_GivesUpEarly()
+    {
+        // A dead link fails after GiveUpBeforeFirstByte, not after the long GiveUpAfter meant for real downloads.
+        var server = await TestFileServer.StartAsync();
+        var url = server.AddFile("a.bin", TestData.Random(MB, 36));
+        await server.DisposeAsync();
+        var options = Options() with { ConnectionsPerFile = 1, GiveUpAfter = TimeSpan.FromMinutes(10), GiveUpBeforeFirstByte = TimeSpan.FromSeconds(2) };
+
+        var clock = Stopwatch.StartNew();
+        var (_, outcome) = await Run(NewState(url), options);
+
+        Assert.Equal(DownloadStatus.Error, outcome.Status);
+        Assert.True(clock.Elapsed < TimeSpan.FromSeconds(15), $"took {clock.Elapsed}");
+    }
+
+    [Fact]
     public async Task FolderUnavailable_IsError()
     {
         var url = _server.AddFile("a.bin", TestData.Random(MB, 32));

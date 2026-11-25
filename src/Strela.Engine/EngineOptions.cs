@@ -7,10 +7,10 @@ public sealed record EngineOptions
 {
     public required string DownloadFolder { get; init; }
     public required string StateFolder { get; init; }
-    /// <summary>Connections per file: 1..32 fixed, 0 = auto (start with 8, grow by 4 while it pays off, up to 32).</summary>
+    /// <summary>Connections per file: 1..32 fixed, 0 = auto (start with 8, +50% while it pays off, up to 32).</summary>
     public int ConnectionsPerFile { get; init; } = 0;
     /// <summary>Auto mode: how often throughput is measured and connections may be added.</summary>
-    public TimeSpan AutoTuneInterval { get; init; } = TimeSpan.FromSeconds(3);
+    public TimeSpan AutoTuneInterval { get; init; } = TimeSpan.FromSeconds(1.5);
     public int MaxActiveDownloads { get; init; } = 3;
     public long MinSegmentBytes { get; init; } = 1 << 20;
     public int BufferBytes { get; init; } = 512 * 1024;
@@ -19,7 +19,10 @@ public sealed record EngineOptions
     public double SlowThreshold { get; init; } = 0.25;
     public TimeSpan SlowGrace { get; init; } = TimeSpan.FromSeconds(6);
     public TimeSpan StallTimeout { get; init; } = TimeSpan.FromSeconds(30);   // нет байтов → соединение мёртвое
-    public TimeSpan GiveUpAfter { get; init; } = TimeSpan.FromMinutes(2);
+    /// <summary>Network errors without a single new byte for this long end a download that has progress in Error.</summary>
+    public TimeSpan GiveUpAfter { get; init; } = TimeSpan.FromMinutes(15);
+    /// <summary>The same for a download with nothing downloaded yet: a dead or mistyped link fails quickly.</summary>
+    public TimeSpan GiveUpBeforeFirstByte { get; init; } = TimeSpan.FromMinutes(2);
 
     // ---- torrents (read when the shared torrent engine starts: the first torrent of the session) ----
 

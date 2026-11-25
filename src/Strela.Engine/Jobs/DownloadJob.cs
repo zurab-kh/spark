@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using Strela.Engine.Http;
 using Strela.Engine.Manager;
 using Strela.Engine.Policies;
 using Strela.Engine.Probe;
@@ -26,9 +27,10 @@ namespace Strela.Engine.Jobs;
 /// </para>
 /// <para>
 /// Auto mode (<see cref="EngineOptions.ConnectionsPerFile"/> = 0): start with 8 connections; every
-/// <see cref="EngineOptions.AutoTuneInterval"/> add 4 more (new workers steal tails) while at least 8 MB remain and
-/// the last step raised throughput by ≥ 10%; once a step does not pay off the count is frozen. Never above 32 or the
-/// host's ceiling.
+/// <see cref="EngineOptions.AutoTuneInterval"/> add half as many again (8 → 12 → 18 → 27 → 32; new workers steal tails)
+/// while at least 8 MB remain and the last step raised throughput by ≥ 10%; once a step does not pay off the count is
+/// frozen. Half, not double: a step past what the server tolerates costs a wave of 429s.
+/// Never above 32 or the host's ceiling.
 /// </para>
 /// </summary>
 internal sealed class DownloadJob : IDownloadJob
@@ -36,11 +38,12 @@ internal sealed class DownloadJob : IDownloadJob
     private const string DiskFullText = "Нет места на диске";
     private const string StaleLinkText = "Ссылка устарела — обновите ссылку";
     private const int AutoStartConnections = 8;
-    private const int AutoStepConnections = 4;
     private const int AutoMaxConnections = 32;
     private const long AutoMinRemainingBytes = 8L << 20;
     private const double AutoMinGrowth = 1.10;
     private static readonly TimeSpan SpeedWindow = TimeSpan.FromSeconds(3);
+    /// <summary>A tail is stolen only from an owner that needs at least this long for it: half of it is then saved.</summary>
+    private const double StealMinOwnerSeconds = 2;
 
     private readonly HttpClient _http;
     private readonly HostLimits _limits;
@@ -171,30 +174,55 @@ internal sealed class DownloadJob : IDownloadJob
     private async Task<ProbeResult> ProbeAsync(CancellationToken token)
     {
         var streak = new RetryStreak();
+        var honestTried = false;
         while (true)
         {
-            Exception error;
-            using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(token))
+            var (result, error) = await ProbeOnceAsync(State.ToRequest(), token);
+            if (result is not null)
+                return result;
+
+            if (!honestTried && error is HttpRequestException { StatusCode: null } && !StrelaHttp.HasCustomUserAgent(State.Headers))
             {
-                deadline.CancelAfter(Options.StallTimeout);   // HttpClient itself has no timeout
-                try
+                // No answer at all while Spark posed as Chrome: bot protection that checks the agent against the TLS
+                // fingerprint, or just the network. Once, at once: as Spark, then as Chrome again to tell the two apart.
+                honestTried = true;
+                _log.Warn($"{State.CurrentUrl}: no answer to the browser User-Agent ({error.Message}); trying {StrelaHttp.HonestUserAgent}");
+                var headers = new Dictionary<string, string>(State.Headers ?? [], StringComparer.OrdinalIgnoreCase)
                 {
-                    var result = await Prober.ProbeAsync(_http, State.ToRequest(), deadline.Token);
-                    if ((int)result.Status < 400)
-                        return result;
-                    error = new HttpStatusException(result.Status, null);
-                }
-                catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
+                    ["User-Agent"] = StrelaHttp.HonestUserAgent,
+                };
+                var (asSpark, _) = await ProbeOnceAsync(State.ToRequest() with { Headers = headers }, token);
+                if (asSpark is not null)
                 {
-                    error = new TimeoutException("Сервер не отвечает", ex);
-                }
-                catch (Exception ex) when (!token.IsCancellationRequested)
-                {
-                    error = ex;
+                    var (asChrome, _) = await ProbeOnceAsync(State.ToRequest(), token);
+                    if (asChrome is not null)
+                        return asChrome;   // the network blinked: Chrome stays
+                    State.Headers = headers;   // kept in the state: every later request and every resume use it
+                    _log.Warn($"{State.CurrentUrl}: the server drops the browser User-Agent, using {StrelaHttp.HonestUserAgent}");
+                    return asSpark;
                 }
             }
+            await BackOffAsync(streak, error!, token);
+        }
+    }
 
-            await BackOffAsync(streak, error, token);
+    /// <summary>One probe with its own deadline. A failing status and network errors come back as the error.</summary>
+    private async Task<(ProbeResult? Result, Exception? Error)> ProbeOnceAsync(DownloadRequest request, CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(Options.StallTimeout);   // HttpClient itself has no timeout
+        try
+        {
+            var result = await Prober.ProbeAsync(_http, request, deadline.Token);
+            return (int)result.Status < 400 ? (result, null) : (null, new HttpStatusException(result.Status, null));
+        }
+        catch (OperationCanceledException ex) when (!token.IsCancellationRequested)
+        {
+            return (null, new TimeoutException("Сервер не отвечает", ex));
+        }
+        catch (Exception ex) when (!token.IsCancellationRequested)
+        {
+            return (null, ex);
         }
     }
 
@@ -454,7 +482,7 @@ internal sealed class DownloadJob : IDownloadJob
 
     /// <summary>
     /// Auto mode: every AutoTuneInterval measures the job's throughput over the interval. The first step always adds
-    /// connections; later steps only while the previous one raised throughput by ≥ 10% over the interval before it.
+    /// half the live connections; later steps only while the previous one raised throughput by ≥ 10% over the interval before it.
     /// Stops for good (frozen) when a step did not pay off, fewer than 8 MB remain, or no connection can be added
     /// (32, or the host's ceiling after 429/503).
     /// </summary>
@@ -482,7 +510,7 @@ internal sealed class DownloadJob : IDownloadJob
                 }
                 if (State.TotalBytes is not { } total || total - DownloadedBytes < AutoMinRemainingBytes)
                     return;   // the tail: more connections would only split crumbs
-                if (AddWorkers(AutoStepConnections, workerToken) == 0)
+                if (AddHalfMoreWorkers(workerToken) == 0)
                     return;   // at 32 or the host's ceiling
                 beforeStep = rate;
             }
@@ -507,8 +535,8 @@ internal sealed class DownloadJob : IDownloadJob
         }
     }
 
-    /// <summary>Adds up to <paramref name="step"/> workers within the ceiling; returns how many were added.</summary>
-    private int AddWorkers(int step, CancellationToken token)
+    /// <summary>Adds half as many workers as are live (at least 1) within the ceiling; returns how many were added.</summary>
+    private int AddHalfMoreWorkers(CancellationToken token)
     {
         int added, live;
         lock (_workersLock)
@@ -518,7 +546,7 @@ internal sealed class DownloadJob : IDownloadJob
             lock (_segmentsLock)
             {
                 // Nobody live: everything is done or reserved, there is nothing to share.
-                added = _liveWorkers == 0 ? 0 : Math.Clamp(ConnectionCeiling() - _liveWorkers, 0, step);
+                added = _liveWorkers == 0 ? 0 : Math.Clamp(ConnectionCeiling() - _liveWorkers, 0, Math.Max(1, _liveWorkers / 2));
                 _liveWorkers += added;
                 live = _liveWorkers;
             }
@@ -536,6 +564,7 @@ internal sealed class DownloadJob : IDownloadJob
     /// <summary>
     /// Every SlowCheckInterval: each open connection's speed and remaining bytes go to the
     /// <see cref="SlowConnectionMonitor"/>; flagged connections are reopened from their segment's Position.
+    /// The speeds are also recorded on the segments, so stealing skips tails their owners finish soon anyway.
     /// </summary>
     private async Task WatchSlowAsync(bool mayGrow, CancellationToken token)
     {
@@ -564,6 +593,7 @@ internal sealed class DownloadJob : IDownloadJob
                 foreach (var w in workers)
                 {
                     meters[w.Id].Sample(w.ReceivedBytes, now);
+                    w.ReportSpeed(meters[w.Id].BytesPerSecond);
                     if (w.OpenRequestRemaining is { } remaining)
                         samples.Add(new WorkerSample(w.Id, meters[w.Id].BytesPerSecond, remaining));
                 }
@@ -603,7 +633,7 @@ internal sealed class DownloadJob : IDownloadJob
             }
 
             // Split and add under the same lock as AllDone and the state snapshot.
-            var tail = SegmentPlanner.Steal(_segments, Options.MinSegmentBytes);
+            var tail = SegmentPlanner.Steal(_segments, Options.MinSegmentBytes, StealMinOwnerSeconds);
             if (tail is null)
             {
                 _liveWorkers--;
@@ -731,7 +761,8 @@ internal sealed class DownloadJob : IDownloadJob
     }
 
     /// <summary>
-    /// Handles one failed request: a fatal answer, or <see cref="EngineOptions.GiveUpAfter"/> without a committed
+    /// Handles one failed request: a fatal answer, or <see cref="EngineOptions.GiveUpAfter"/> (before any progress at all:
+    /// <see cref="EngineOptions.GiveUpBeforeFirstByte"/>) without a committed
     /// byte anywhere in the job, ends the job (<see cref="JobFailedException"/>); otherwise waits the backoff delay
     /// (never past the give-up deadline, so the last attempt happens right at it). Callers check their own
     /// cancellation before calling, so a pause never gets classified.
@@ -743,11 +774,12 @@ internal sealed class DownloadJob : IDownloadJob
             throw new JobFailedException(new JobOutcome(DownloadStatus.Error, FatalText(http?.Status, error)), error);
 
         var failingFor = FailingFor();
-        if (failingFor >= Options.GiveUpAfter)
+        var giveUpAfter = HasProgress() ? Options.GiveUpAfter : Min(Options.GiveUpAfter, Options.GiveUpBeforeFirstByte);
+        if (failingFor >= giveUpAfter)
             throw new JobFailedException(new JobOutcome(DownloadStatus.Error, $"Сервер недоступен: {error.Message}"), error);
 
         var delay = RetryPolicy.Delay(streak.Next(), http?.RetryAfter);
-        var left = Options.GiveUpAfter - failingFor;
+        var left = giveUpAfter - failingFor;
         if (delay > left)
             delay = left;
         _log.Warn($"{State.FileName ?? State.CurrentUrl}: {error.Message}; retry in {delay.TotalSeconds:0.#} s");
@@ -765,6 +797,8 @@ internal sealed class DownloadJob : IDownloadJob
                 _retryDeadlines.Remove(due);
         }
     }
+
+    private static TimeSpan Min(TimeSpan a, TimeSpan b) => a < b ? a : b;
 
     /// <summary>How long the job has gone without a committed byte since its first failure (starts the clock).</summary>
     private TimeSpan FailingFor()

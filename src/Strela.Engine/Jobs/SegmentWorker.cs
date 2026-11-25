@@ -56,6 +56,16 @@ internal sealed class SegmentWorker
         get { lock (_gate) return _requestSegment?.Remaining; }
     }
 
+    /// <summary>The measured speed of this connection, recorded on the segment it is downloading (for stealing).</summary>
+    public void ReportSpeed(double bytesPerSecond)
+    {
+        lock (_gate)
+        {
+            if (_requestSegment is { } segment)
+                segment.BytesPerSecond = bytesPerSecond;
+        }
+    }
+
     /// <summary>Aborts the open ranged request; the worker reopens it from the segment's Position on a new connection.</summary>
     public bool ReplaceConnection()
     {
@@ -207,6 +217,7 @@ internal sealed class SegmentWorker
                 _request = null;
                 _requestSegment = null;
             }
+            segment.BytesPerSecond = 0;   // nobody is receiving it now: a backing-off owner must not shield it from stealing
             if (receiving)
                 _job.ResponseEnded();
             segment.Abandon();   // reserved-but-uncommitted bytes go back; a no-op after a clean finish

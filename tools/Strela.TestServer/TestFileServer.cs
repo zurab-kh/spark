@@ -139,6 +139,12 @@ public sealed class TestFileServer : IAsyncDisposable
         var options = entry.Options;
         var version = entry.Version;
 
+        if (options.DropBrowserAgents && context.Request.Headers.UserAgent.ToString().Contains("Mozilla", StringComparison.Ordinal))
+        {
+            context.Abort();
+            return;
+        }
+
         if (options.FixedStatus is { } fixedStatus)
         {
             response.StatusCode = fixedStatus;

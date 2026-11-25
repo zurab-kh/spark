@@ -218,6 +218,33 @@ public class PoliciesTests
     }
 
     [Fact]
+    public async Task HostLimits_ForgottenAfterAWhile()
+    {
+        var limits = new HostLimits(TimeSpan.FromMilliseconds(200));
+
+        limits.Lower("h", 2);
+        Assert.Equal(2, limits.Ceiling("h", 16));
+
+        await Task.Delay(400);
+        Assert.Equal(16, limits.Ceiling("h", 16));
+        limits.Lower("h", 8);                       // a fresh ceiling, not min(old 2, 8)
+        Assert.Equal(8, limits.Ceiling("h", 16));
+    }
+
+    [Fact]
+    public async Task HostLimits_HigherReport_DoesNotExtendCeiling()
+    {
+        var limits = new HostLimits(TimeSpan.FromMilliseconds(400));
+
+        limits.Lower("h", 2);
+        await Task.Delay(250);
+        limits.Lower("h", 20);                      // not a lowering: the clock keeps running
+        await Task.Delay(250);
+
+        Assert.Equal(16, limits.Ceiling("h", 16));
+    }
+
+    [Fact]
     public void HostLimits_CaseInsensitive_NeverRaises_MinOne()
     {
         var limits = new HostLimits();

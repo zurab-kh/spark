@@ -13,4 +13,5 @@ public sealed record ServeOptions(
     string? ContentDisposition = null,
     int? FixedStatus = null,              // всегда этот статус (404, 403…)
     bool IgnoreRangeAfterProbe = false,   // Range bytes=0-0 → 206, остальные Range → 200 всё тело
-    bool OmitContentLength = false);      // chunked, без размера
+    bool OmitContentLength = false,       // chunked, без размера
+    bool DropBrowserAgents = false);      // User-Agent с «Mozilla» — оборвать соединение (защита от ботов)

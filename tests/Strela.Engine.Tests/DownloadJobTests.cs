@@ -68,7 +68,7 @@ public sealed class DownloadJobTests : IAsyncLifetime
     [Fact]
     public async Task Auto_PerConnectionLimit_GrowsAndBeatsFixed8()
     {
-        // 500 KB/s per connection: every added connection adds throughput, so auto keeps growing (8 → 12 → … ≥ 24)
+        // 500 KB/s per connection: every added connection adds throughput, so auto keeps growing (8 → 12 → 18 → 27 → 32)
         // and finishes well before a fixed 8 (~12.6 s). Both run at once: the limit is per connection.
         var content = TestData.Random(48 * MB, 40);
         var serve = new ServeOptions(BytesPerSecondPerConnection: 500_000);
@@ -89,7 +89,7 @@ public sealed class DownloadJobTests : IAsyncLifetime
         Assert.True(autoJob.PeakWorkers <= 32, $"peak {autoJob.PeakWorkers}; {autoLog}");
         Assert.Equal(8, fixedJob.PeakWorkers);
         Assert.True(autoTime < fixedTime, $"auto {autoTime}, fixed 8 {fixedTime}; {autoLog}");
-        Assert.True(_log.Contains("Info", "auto: 24 connections"), autoLog);
+        Assert.True(_log.Contains("Info", "auto: 18 connections"), autoLog);
     }
 
     [Fact]

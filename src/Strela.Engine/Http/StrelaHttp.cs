@@ -8,6 +8,13 @@ public static class StrelaHttp
     public const string UserAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
+    /// <summary>
+    /// Для серверов, которые рвут соединение, когда «Chrome» приходит не из браузера (защита от ботов сверяет
+    /// User-Agent с отпечатком TLS): Spark называет себя прямо, как curl или wget.
+    /// </summary>
+    public static readonly string HonestUserAgent =
+        $"Spark/{typeof(StrelaHttp).Assembly.GetName().Version?.ToString(3) ?? "1.0.0"}";
+
     /// <summary>Новый клиент: только HTTP/1.1, без распаковки, без общего таймаута (его ставят вызывающие).</summary>
     public static HttpClient Create()
     {
@@ -43,12 +50,15 @@ public static class StrelaHttp
         return request;
     }
 
+    /// <summary>Свой User-Agent среди заголовков загрузки (имя без учёта регистра).</summary>
+    public static bool HasCustomUserAgent(IReadOnlyDictionary<string, string>? headers) =>
+        headers?.Keys.Any(k => string.Equals(k, "User-Agent", StringComparison.OrdinalIgnoreCase)) == true;
+
     /// <summary>Заголовки запроса из <paramref name="req"/> (UA, Referer, пользовательские, Cookie) — без Range.</summary>
     internal static void Apply(HttpRequestMessage request, DownloadRequest req)
     {
         // Пользовательский User-Agent заменяет встроенный, а не дописывается к нему.
-        var customUserAgent = req.Headers?.Keys.Any(k => string.Equals(k, "User-Agent", StringComparison.OrdinalIgnoreCase)) == true;
-        if (!customUserAgent)
+        if (!HasCustomUserAgent(req.Headers))
         {
             request.Headers.TryAddWithoutValidation("User-Agent", UserAgent);
         }

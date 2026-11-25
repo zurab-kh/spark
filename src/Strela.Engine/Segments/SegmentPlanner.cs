@@ -28,9 +28,12 @@ public static class SegmentPlanner
 
     /// <summary>
     /// Picks the unfinished segment with the most unreserved bytes (ties: first in the list) and cuts its tail off.
+    /// With <paramref name="minOwnerSeconds"/> a segment whose owner (at its measured <see cref="Segment.BytesPerSecond"/>)
+    /// would finish the free part sooner is left alone: splitting it saves less than the new request costs, and a
+    /// burst of tiny requests at the end of a download is what makes servers answer 429.
     /// The candidate is chosen without holding its lock, so it may change meanwhile — SplitOff re-checks under the lock.
     /// </summary>
-    public static Segment? Steal(IReadOnlyList<Segment> segments, long minSegmentBytes)
+    public static Segment? Steal(IReadOnlyList<Segment> segments, long minSegmentBytes, double minOwnerSeconds = 0)
     {
         Segment? best = null;
         long bestFree = -1;
@@ -38,6 +41,9 @@ public static class SegmentPlanner
         {
             if (s.IsDone) continue;
             long free = s.Free;
+            var speed = s.BytesPerSecond;
+            if (speed > 0 && free < speed * minOwnerSeconds)
+                continue;
             if (free > bestFree)
             {
                 best = s;
