@@ -19,7 +19,7 @@ on:
         default: false
 
 env:
-  RELEASES_REPO: https://github.com/${{ github.repository }}
+  RELEASES_REPO: https://github.com/zurab-kh/spark
   PACK_ID: SparkDownloader
   VPK_VERSION: 1.2.161
   DOTNET_NOLOGO: true
