@@ -6,14 +6,14 @@ using Velopack.Sources;
 namespace Strela.App.Services;
 
 /// <summary>
-/// Обновления по воздуху (Velopack). Новые версии лежат в выпусках публичного репозитория <see cref="ReleasesUrl"/>,
+/// Обновления по воздуху (Velopack). Новые версии лежат в выпусках открытого репозитория <see cref="ReleasesUrl"/>,
 /// их выкладывает GitHub Actions по тегу v*. Проверка через минуту после запуска и затем раз в 6 часов; новая
 /// версия скачивается тихо, Spark предлагает перезапуститься, а если пользователь не стал — ставит её при выходе.
 /// Работает только в установленном Spark (Setup или портативная сборка из выпуска), не в сборке из исходников.
 /// </summary>
 public sealed class AppUpdater : IDisposable
 {
-    public const string ReleasesUrl = "https://github.com/zurab-kh/spark-releases";
+    public const string ReleasesUrl = "https://github.com/zurab-kh/spark";
     /// <summary>Для проверки: папка с выпусками vpk pack или другой адрес на GitHub вместо <see cref="ReleasesUrl"/>.</summary>
     public const string SourceVariable = "SPARK_UPDATE_SOURCE";
 

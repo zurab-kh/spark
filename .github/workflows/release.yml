@@ -1,10 +1,8 @@
 # Выпуск Spark: собирает Windows и macOS (Apple Silicon, Intel), упаковывает их Velopack и выкладывает в
-# публичный репозиторий zurab-kh/spark-releases, откуда установленный Spark обновляется сам.
+# выпуски этого репозитория, откуда установленный Spark обновляется сам.
 #
 #   git tag v1.4.1 && git push origin v1.4.1     → сборка и выпуск 1.4.1
 #   Actions → Release → Run workflow              → сборка без выпуска (publish выключен) или с ним
-#
-# Нужен секрет RELEASES_TOKEN: токен GitHub с правом Contents: Read and write на zurab-kh/spark-releases.
 name: Release
 
 on:
@@ -16,12 +14,12 @@ on:
         description: Версия, например 1.4.1
         required: true
       publish:
-        description: Выложить в spark-releases
+        description: Выложить выпуск
         type: boolean
         default: false
 
 env:
-  RELEASES_REPO: https://github.com/zurab-kh/spark-releases
+  RELEASES_REPO: https://github.com/${{ github.repository }}
   PACK_ID: SparkDownloader
   VPK_VERSION: 1.2.161
   DOTNET_NOLOGO: true
@@ -104,6 +102,8 @@ jobs:
     needs: [version, windows, macos]
     if: github.event_name == 'push' || inputs.publish
     runs-on: windows-latest
+    permissions:
+      contents: write   # the built-in token creates the release in this repository
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -117,9 +117,8 @@ jobs:
       # macOS first, Windows last: every upload goes into the same GitHub release.
       - name: Upload
         env:
-          TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if (-not $env:TOKEN) { throw "Нет секрета RELEASES_TOKEN" }
           foreach ($channel in 'osx-arm64', 'osx-x64', 'win') {
             vpk upload github --repoUrl $env:RELEASES_REPO --token $env:TOKEN --channel $channel --outputDir "releases/$channel" `
               --tag "v$env:VERSION" --releaseName "Spark $env:VERSION" --merge --publish
