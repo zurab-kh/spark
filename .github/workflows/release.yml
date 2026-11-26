@@ -53,7 +53,9 @@ jobs:
       - run: dotnet publish src/Strela.App -c Release -r win-x64 --self-contained -p:PublishReadyToRun=true -p:Version=$env:VERSION -o publish/win
       - name: Previous version (for small delta updates)
         continue-on-error: true
-        run: vpk download github --repoUrl $env:RELEASES_REPO --channel win -o releases
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}   # anonymous API calls share the runner's IP limit and get 403
+        run: vpk download github --repoUrl $env:RELEASES_REPO --token $env:TOKEN --channel win -o releases
       - run: >
           vpk pack --packId $env:PACK_ID --packVersion $env:VERSION --packDir publish/win --mainExe Spark.exe
           --packTitle Spark --packAuthors Spark --icon src/Strela.App/Assets/spark.ico --channel win --outputDir releases
@@ -88,7 +90,9 @@ jobs:
         run: codesign --force --deep --sign - release/mac/${{ matrix.label }}/Spark.app
       - name: Previous version (for small delta updates)
         continue-on-error: true
-        run: vpk download github --repoUrl $RELEASES_REPO --channel ${{ matrix.rid }} -o releases
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}   # anonymous API calls share the runner's IP limit and get 403
+        run: vpk download github --repoUrl $RELEASES_REPO --token $TOKEN --channel ${{ matrix.rid }} -o releases
       - run: >
           vpk pack --packId $PACK_ID --packVersion $VERSION --packDir release/mac/${{ matrix.label }}/Spark.app --mainExe Spark
           --packTitle Spark --packAuthors Spark --icon src/Spark.Mac/macos/spark.icns --channel ${{ matrix.rid }} --outputDir releases
