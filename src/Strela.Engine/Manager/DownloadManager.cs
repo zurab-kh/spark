@@ -583,7 +583,7 @@ public sealed class DownloadManager : IDownloadManager
         }
 
         return new DownloadSnapshot(s.Id, s.FileName ?? e.DisplayName, s.FinalPath ?? s.PartPath, s.OriginalUrl,
-            s.TotalBytes, downloaded, speed, eta, e.Status, text, connections, s.QueueOrder, s.Kind);
+            s.TotalBytes, downloaded, speed, eta, e.Status, text, connections, s.QueueOrder, s.Kind, s.AddedAt);
     }
 
     // ---- scheduler ----------------------------------------------------------------------------------------

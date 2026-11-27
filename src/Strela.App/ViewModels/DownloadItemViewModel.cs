@@ -21,6 +21,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     private string _detailTail = "";
     private string _badgeKind = "other";
     private string _percentText = "";
+    private int _queuePosition;
 
     public DownloadItemViewModel(Guid id) => Id = id;
 
@@ -62,6 +63,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
             OnPropertyChanged(nameof(ShowProgressBar));
             OnPropertyChanged(nameof(IsPaused));
             OnPropertyChanged(nameof(ShowPercent));
+            OnPropertyChanged(nameof(IsQueued));
         }
     }
 
@@ -69,6 +71,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     public bool ShowPercent => Status is DownloadStatus.Downloading or DownloadStatus.Paused;
 
     public bool IsCompleted => Status == DownloadStatus.Completed;
+    public bool IsQueued => Status == DownloadStatus.Queued;
     public bool IsActive => Status == DownloadStatus.Downloading;
     public bool IsError => Status == DownloadStatus.Error;
     public bool ShowProgressBar => Status is not (DownloadStatus.Completed or DownloadStatus.Error);
@@ -76,9 +79,13 @@ public sealed partial class DownloadItemViewModel : ObservableObject
     public bool CanResume => Status == DownloadStatus.Paused;
     public bool CanRetry => Status == DownloadStatus.Error;
 
-    /// <summary>Обновляет только изменившиеся свойства — PropertyChanged для остальных не поднимается.</summary>
-    public void Update(DownloadSnapshot s)
+    /// <summary>
+    /// Обновляет только изменившиеся свойства — PropertyChanged для остальных не поднимается.
+    /// <paramref name="queuePosition"/> — номер среди ожидающих (1 — начнётся первой); 0 — не показывать.
+    /// </summary>
+    public void Update(DownloadSnapshot s, int queuePosition = 0)
     {
+        _queuePosition = s.Status == DownloadStatus.Queued ? queuePosition : 0;
         FileName = s.FileName;
         Url = s.Url;
         FilePath = s.FilePath;
@@ -115,7 +122,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         {
             DownloadStatus.Completed => "Готово",
             DownloadStatus.Paused => "Приостановлено",
-            DownloadStatus.Queued => "В очереди",
+            DownloadStatus.Queued => QueuedLabel,
             _ => "",
         };
         DetailTail = StatusLabel.Length == 0 ? DetailText
@@ -139,7 +146,7 @@ public sealed partial class DownloadItemViewModel : ObservableObject
         return s.Status switch
         {
             DownloadStatus.Completed => $"Готово · {SizeText}",
-            DownloadStatus.Queued => s.TotalBytes is > 0 ? $"В очереди · {SizeText}" : "В очереди",
+            DownloadStatus.Queued => s.TotalBytes is > 0 ? $"{QueuedLabel} · {SizeText}" : QueuedLabel,
             DownloadStatus.Paused => $"Приостановлено · {done}",
             DownloadStatus.Error => s.StatusText ?? "Ошибка",
             // Торрент: «1.2 ГБ из 4.0 ГБ · 12 МБ/с · сиды 30 · пиры 12 · осталось 3:10».
@@ -148,6 +155,9 @@ public sealed partial class DownloadItemViewModel : ObservableObject
             _ => Join(done, SpeedText, string.IsNullOrEmpty(EtaText) ? "" : $"осталось {EtaText}", s.StatusText),
         };
     }
+
+    /// <summary>«В очереди №2»: номер меняется от «Начать раньше / позже», хотя место в списке остаётся прежним.</summary>
+    private string QueuedLabel => _queuePosition > 0 ? $"В очереди №{_queuePosition}" : "В очереди";
 
     private static string Join(params string?[] parts) =>
         string.Join(" · ", parts.Where(p => !string.IsNullOrEmpty(p)));

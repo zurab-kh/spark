@@ -227,9 +227,10 @@
                         <MenuItem x:Name="MenuRetry" Header="Повторить" Click="MenuRetry_Click" />
                         <MenuItem Header="Обновить ссылку (из буфера обмена)" Click="MenuUpdateUrl_Click" />
                         <MenuItem Header="Копировать ссылку" Click="MenuCopyUrl_Click" />
-                        <Separator />
-                        <MenuItem Header="Выше" Click="MenuUp_Click" />
-                        <MenuItem Header="Ниже" Click="MenuDown_Click" />
+                        <!-- Очередь: только у ожидающих загрузок -->
+                        <Separator x:Name="QueueSeparator" />
+                        <MenuItem x:Name="MenuEarlier" Header="Начать раньше" Click="MenuEarlier_Click" />
+                        <MenuItem x:Name="MenuLater" Header="Начать позже" Click="MenuLater_Click" />
                         <Separator />
                         <MenuItem Header="Удалить из списка" InputGesture="Back" Click="MenuRemove_Click" />
                         <MenuItem Header="Удалить вместе с файлом…" InputGesture="Shift+Back" Click="MenuRemoveWithFile_Click" />
@@ -241,18 +242,27 @@
 
             <!-- Пустое состояние -->
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
-                        IsVisible="{Binding !Items.Count}">
+                        IsVisible="{Binding !HasDownloads}">
                 <Image Source="/Assets/spark-256.png" Width="64" Height="64" HorizontalAlignment="Center" />
                 <TextBlock Text="Загрузок пока нет" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0" />
                 <TextBlock FontSize="13" Margin="0,6,0,0" TextAlignment="Center" Classes="secondary"
                            Text="Вставьте ссылку сверху, перетащите её в окно&#10;или просто скопируйте — Spark предложит скачать." />
+            </StackPanel>
+
+            <!-- Поиск ничего не нашёл -->
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"
+                        IsVisible="{Binding NothingFound}">
+                <PathIcon Width="28" Height="28" Data="{x:Static v:Icons.Search}" Foreground="{DynamicResource SecondaryTextBrush}" />
+                <TextBlock Text="Ничего не найдено" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,12,0,0" />
+                <TextBlock Text="Поиск идёт по имени файла и ссылке. Esc — очистить." FontSize="13" Margin="0,6,0,0"
+                           HorizontalAlignment="Center" Classes="secondary" />
             </StackPanel>
         </Grid>
 
         <!-- Строка состояния -->
         <Border Grid.Row="3" Margin="-16,10,-16,0" Padding="16,6" BorderThickness="0,1,0,0"
                 BorderBrush="{DynamicResource CardStrokeBrush}">
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid ColumnDefinitions="*,Auto,Auto">
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                     <PathIcon Width="12" Height="12" Data="{x:Static v:Icons.Download}" Foreground="{DynamicResource SecondaryTextBrush}" Margin="0,0,6,0" />
                     <TextBlock Classes="secondary" Text="{Binding SpeedTotalText}" VerticalAlignment="Center" />
@@ -261,7 +271,18 @@
                     <Ellipse Width="6" Height="6" Margin="16,0,6,0" VerticalAlignment="Center" Fill="{DynamicResource SecondaryTextBrush}" />
                     <TextBlock Classes="secondary" Text="{Binding QueuedText}" VerticalAlignment="Center" />
                 </StackPanel>
-                <Button Grid.Column="1" Classes="ghost" Width="NaN" Padding="10,0" Click="Settings_Click"
+                <!-- Быстрый поиск по загрузкам: Cmd+F, Esc — очистить -->
+                <TextBox x:Name="SearchBox" Grid.Column="1" Width="230" Margin="12,0,6,0" MinHeight="28" Padding="6,4"
+                         VerticalAlignment="Center" VerticalContentAlignment="Center" FontSize="12" CornerRadius="6"
+                         Watermark="Поиск" AutomationProperties.Name="Поиск по загрузкам"
+                         ToolTip.Tip="Поиск по имени файла и ссылке (Cmd+F)"
+                         IsVisible="{Binding HasDownloads}" Text="{Binding SearchText}">
+                    <TextBox.InnerLeftContent>
+                        <PathIcon Width="12" Height="12" Margin="10,0,0,0" Data="{x:Static v:Icons.Search}"
+                                  Foreground="{DynamicResource SecondaryTextBrush}" />
+                    </TextBox.InnerLeftContent>
+                </TextBox>
+                <Button Grid.Column="2" Classes="ghost" Width="NaN" Padding="10,0" Click="Settings_Click"
                         ToolTip.Tip="Настройки (Cmd+,)" AutomationProperties.Name="Настройки">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <PathIcon Width="13" Height="13" Data="{x:Static v:Icons.Gear}" />

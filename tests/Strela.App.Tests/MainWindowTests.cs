@@ -20,6 +20,7 @@ public class MainWindowTests
         {
             Rows_ShowFileNameAndDetails_NotItemTypeName();
             EmptyList_ShowsEmptyState();
+            Search_FiltersRows_ThenShowsNothingFound();
             SecondaryWindows_Load();
         });
     }
@@ -69,6 +70,33 @@ public class MainWindowTests
         var empty = (FrameworkElement)window.FindName("EmptyState");
         Assert.Equal(Visibility.Visible, empty.Visibility);
         SaveSnapshotIfRequested(window, "main-empty.png");
+        window.Close();
+    }
+
+    private static void Search_FiltersRows_ThenShowsNothingFound()
+    {
+        var window = CreateWindow(
+            Snap("A320 AUA Pack by Atarium.zip", 960 * MB, 401 * MB, DownloadStatus.Downloading, 64 * MB, TimeSpan.FromSeconds(8), 1),
+            Snap("IniBuilds Global Jet Manual v1.0.pdf", 11 * MB, 11 * MB, DownloadStatus.Completed, 0, null, 0));
+        var vm = (MainViewModel)window.DataContext;
+        var search = (FrameworkElement)window.FindName("SearchBox");
+        Assert.True(search.IsVisible);
+        // Screen readers get the box by its name only: the magnifier and the placeholder are not separate elements.
+        Assert.DoesNotContain(ControlNames(window), n => n is "Поиск" or "\uE721" or "Вставьте ссылку и нажмите Enter");
+        SaveSnapshotIfRequested(window, "main-newest-first.png");
+
+        vm.SearchText = "manual";
+        window.UpdateLayout();
+        var texts = CollectText(window);
+        Assert.Contains("IniBuilds Global Jet Manual v1.0.pdf", texts);
+        Assert.DoesNotContain("A320 AUA Pack by Atarium.zip", texts);
+        SaveSnapshotIfRequested(window, "main-search.png");
+
+        vm.SearchText = "nothing-like-this";
+        window.UpdateLayout();
+        Assert.Contains("Ничего не найдено", CollectText(window));
+        Assert.Equal(Visibility.Collapsed, ((FrameworkElement)window.FindName("EmptyState")).Visibility);
+        SaveSnapshotIfRequested(window, "main-nothing-found.png");
         window.Close();
     }
 
@@ -128,6 +156,21 @@ public class MainWindowTests
         Directory.CreateDirectory(dir);
         using var fs = File.Create(Path.Combine(dir, fileName));
         encoder.Save(fs);
+    }
+
+    private static List<string> ControlNames(Window window)
+    {
+        var names = new List<string>();
+        void Walk(System.Windows.Automation.Peers.AutomationPeer peer)
+        {
+            foreach (var child in peer.GetChildren() ?? [])
+            {
+                if (child.IsControlElement()) names.Add(child.GetName());
+                Walk(child);
+            }
+        }
+        Walk(System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(window));
+        return names;
     }
 
     private static List<string> CollectText(DependencyObject root)

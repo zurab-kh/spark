@@ -7,4 +7,4 @@ public enum DownloadKind { Http, Torrent, Video }
 public sealed record DownloadSnapshot(Guid Id, string FileName, string? FilePath, string Url,
     long? TotalBytes, long DownloadedBytes, double BytesPerSecond, TimeSpan? Eta,
     DownloadStatus Status, string? StatusText, int Connections, long QueueOrder,
-    DownloadKind Kind = DownloadKind.Http);
+    DownloadKind Kind = DownloadKind.Http, DateTimeOffset AddedAt = default);

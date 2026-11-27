@@ -67,7 +67,7 @@ public class MainWindowMacTests
         Assert.Contains("Приостановлено", texts);
         Assert.Contains("Готово", texts);
         Assert.Contains("Сервер вернул 403", texts);
-        Assert.Contains("В очереди", texts);
+        Assert.Contains(texts, t => t.StartsWith("В очереди №", StringComparison.Ordinal));
         Assert.DoesNotContain("Загрузок пока нет", texts);
         Snapshot(window, "mac-main.png");
     }

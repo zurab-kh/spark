@@ -78,7 +78,7 @@ public class MainViewModelTests
     }
 
     [Theory]
-    [InlineData(1, "Удалить «f0.zip» вместе с файлом на диске?")]
+    [InlineData(1, "Удалить «f2.zip» вместе с файлом на диске?")]   // newest first: f2 was added last
     [InlineData(3, "Удалить 3 загрузки вместе с файлами на диске?")]
     public async Task RemoveSelectedWithFile_PromptText(int count, string expected)
     {
@@ -150,7 +150,7 @@ public class MainViewModelTests
         fake.Snapshots.Add(Snap(b, 1));
         var vm = new MainViewModel(fake);
         vm.Refresh();
-        var first = vm.Items[0];
+        var first = vm.Items.Single(i => i.Id == a);
         Assert.Equal(2, vm.Items.Count);
         Assert.Equal(0.1, first.Progress, 3);
 
@@ -165,7 +165,7 @@ public class MainViewModelTests
     }
 
     [Fact]
-    public void Refresh_OrdersByQueueOrder()
+    public void Refresh_SameAddedTime_LaterInQueueOnTop()
     {
         var fake = new FakeDownloadManager();
         var a = Guid.NewGuid();
@@ -178,7 +178,7 @@ public class MainViewModelTests
         fake.Snapshots.Add(Snap(a, 5));
         fake.Snapshots.Add(Snap(b, 2));
         vm.Refresh();
-        Assert.Equal(new[] { b, a }, vm.Items.Select(i => i.Id));
+        Assert.Equal(new[] { a, b }, vm.Items.Select(i => i.Id));
     }
 
     [Fact]
@@ -199,33 +199,6 @@ public class MainViewModelTests
         Assert.Contains("Progress", raised);
         Assert.DoesNotContain("FileName", raised);
         Assert.DoesNotContain("SpeedText", raised);
-    }
-
-    [Fact]
-    public void MoveUp_CallsManagerMove()
-    {
-        var fake = new FakeDownloadManager();
-        var a = Guid.NewGuid();
-        var b = Guid.NewGuid();
-        fake.Snapshots.Add(Snap(a, 0));
-        fake.Snapshots.Add(Snap(b, 1));
-        var vm = new MainViewModel(fake);
-        vm.Refresh();
-        vm.MoveUpCommand.Execute(vm.Items[1]);
-        Assert.Equal((b, 0), Assert.Single(fake.Moves));
-    }
-
-    [Fact]
-    public void MoveDown_CallsManagerMove()
-    {
-        var fake = new FakeDownloadManager();
-        var a = Guid.NewGuid();
-        fake.Snapshots.Add(Snap(a, 0));
-        fake.Snapshots.Add(Snap(Guid.NewGuid(), 1));
-        var vm = new MainViewModel(fake);
-        vm.Refresh();
-        vm.MoveDownCommand.Execute(vm.Items[0]);
-        Assert.Equal((a, 1), Assert.Single(fake.Moves));
     }
 
     [Fact]
@@ -294,5 +267,195 @@ public class MainViewModelTests
         var vm = new MainViewModel(fake);
         vm.Refresh();
         Assert.Equal("Всего: 42 МБ/с · Активно 1 · В очереди 1", vm.TotalsText);
+    }
+
+    private static readonly DateTimeOffset T0 = new(2026, 11, 1, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public void Items_NewestFirst_WhateverTheQueueOrder()
+    {
+        var fake = new FakeDownloadManager();
+        Guid old = Guid.NewGuid(), mid = Guid.NewGuid(), last = Guid.NewGuid();
+        // The queue was reordered: the newest is first in it, the oldest last.
+        fake.Snapshots.Add(Snap(last, 0, name: "last.zip") with { AddedAt = T0.AddMinutes(2) });
+        fake.Snapshots.Add(Snap(old, 1, name: "old.zip") with { AddedAt = T0 });
+        fake.Snapshots.Add(Snap(mid, 2, name: "mid.zip") with { AddedAt = T0.AddMinutes(1) });
+        var vm = new MainViewModel(fake);
+
+        vm.Refresh();
+
+        Assert.Equal(new[] { last, mid, old }, vm.Items.Select(i => i.Id));
+    }
+
+    [Fact]
+    public void NewDownload_AppearsOnTop()
+    {
+        var (fake, vm) = ThreeDownloads();
+        var added = Guid.NewGuid();
+        fake.Snapshots.Add(Snap(added, 3, name: "new.zip") with { AddedAt = T0.AddDays(1) });
+
+        vm.Refresh();
+
+        Assert.Equal(added, vm.Items[0].Id);
+        Assert.Equal(4, vm.Items.Count);
+    }
+
+    private static (FakeDownloadManager Fake, MainViewModel Vm) Named(params (string Name, string Url, DownloadStatus Status)[] items)
+    {
+        var fake = new FakeDownloadManager();
+        for (var i = 0; i < items.Length; i++)
+            fake.Snapshots.Add(Snap(Guid.NewGuid(), i, items[i].Status, name: items[i].Name) with
+            {
+                Url = items[i].Url,
+                AddedAt = T0.AddMinutes(i),
+            });
+        var vm = new MainViewModel(fake);
+        vm.Refresh();
+        return (fake, vm);
+    }
+
+    [Fact]
+    public void Search_ByNameOrLink_EveryWordMustMatch_IgnoringCase()
+    {
+        var (_, vm) = Named(
+            ("A320 AUA Pack.zip", "https://cdn.flightsim.to/a320.zip", DownloadStatus.Completed),
+            ("IniBuilds Global Jet Manual.pdf", "https://inibuilds.com/manual.pdf", DownloadStatus.Completed),
+            ("A350 Livery.zip", "https://github.com/x/a350.zip", DownloadStatus.Completed));
+
+        vm.SearchText = "a320";
+        Assert.Equal(new[] { "A320 AUA Pack.zip" }, vm.Items.Select(i => i.FileName));
+
+        vm.SearchText = "GITHUB";   // only in the link
+        Assert.Equal(new[] { "A350 Livery.zip" }, vm.Items.Select(i => i.FileName));
+
+        vm.SearchText = "  zip   livery ";
+        Assert.Equal(new[] { "A350 Livery.zip" }, vm.Items.Select(i => i.FileName));
+
+        vm.SearchText = "";
+        Assert.Equal(3, vm.Items.Count);
+        Assert.Equal("A350 Livery.zip", vm.Items[0].FileName);   // newest-first order is back
+    }
+
+    [Fact]
+    public void Search_NothingFound_KeepsCountersForAllDownloads()
+    {
+        var (_, vm) = Named(
+            ("a.zip", "https://h/a.zip", DownloadStatus.Downloading),
+            ("b.zip", "https://h/b.zip", DownloadStatus.Queued));
+        Assert.True(vm.HasDownloads);
+        Assert.False(vm.NothingFound);
+
+        vm.SearchText = "nope";
+
+        Assert.Empty(vm.Items);
+        Assert.True(vm.HasDownloads);
+        Assert.True(vm.NothingFound);
+        Assert.Equal("Активно 1", vm.ActiveText);
+        Assert.Equal("В очереди 1", vm.QueuedText);
+    }
+
+    [Fact]
+    public void NoDownloads_IsNotNothingFound()
+    {
+        var vm = new MainViewModel(new FakeDownloadManager()) { SearchText = "x" };
+
+        Assert.False(vm.HasDownloads);
+        Assert.False(vm.NothingFound);
+    }
+
+    [Fact]
+    public void Search_DownloadRemovedWhileHidden_IsForgotten()
+    {
+        var (fake, vm) = Named(("a.zip", "https://h/a.zip", DownloadStatus.Completed), ("b.zip", "https://h/b.zip", DownloadStatus.Completed));
+        vm.SearchText = "a.zip";
+        fake.Snapshots.RemoveAll(s => s.FileName == "b.zip");
+
+        vm.SearchText = "";
+
+        Assert.Equal(new[] { "a.zip" }, vm.Items.Select(i => i.FileName));
+        Assert.False(vm.Contains("https://h/b.zip"));
+    }
+
+    [Fact]
+    public void StartEarlier_TakesThePlaceOfThePreviousWaitingDownload()
+    {
+        // Queue: 0 downloading, 1 waiting, 2 done, 3 waiting.
+        var (fake, vm) = Named(
+            ("run.zip", "https://h/0", DownloadStatus.Downloading),
+            ("wait1.zip", "https://h/1", DownloadStatus.Queued),
+            ("done.zip", "https://h/2", DownloadStatus.Completed),
+            ("wait2.zip", "https://h/3", DownloadStatus.Queued));
+        var wait2 = vm.Items.Single(i => i.FileName == "wait2.zip");
+
+        vm.StartEarlierCommand.Execute(wait2);
+
+        Assert.Equal((wait2.Id, 1), Assert.Single(fake.Moves));
+    }
+
+    [Fact]
+    public void StartLater_TakesThePlaceOfTheNextWaitingDownload()
+    {
+        var (fake, vm) = Named(
+            ("wait1.zip", "https://h/0", DownloadStatus.Queued),
+            ("run.zip", "https://h/1", DownloadStatus.Downloading),
+            ("wait2.zip", "https://h/2", DownloadStatus.Queued));
+        var wait1 = vm.Items.Single(i => i.FileName == "wait1.zip");
+
+        vm.StartLaterCommand.Execute(wait1);
+
+        Assert.Equal((wait1.Id, 2), Assert.Single(fake.Moves));
+    }
+
+    [Fact]
+    public void StartEarlier_NotWaitingOrAlreadyFirst_DoesNothing()
+    {
+        var (fake, vm) = Named(
+            ("run.zip", "https://h/0", DownloadStatus.Downloading),
+            ("wait.zip", "https://h/1", DownloadStatus.Queued));
+
+        vm.StartEarlierCommand.Execute(vm.Items.Single(i => i.FileName == "run.zip"));
+        vm.StartEarlierCommand.Execute(vm.Items.Single(i => i.FileName == "wait.zip"));   // no waiting one before it
+        vm.StartLaterCommand.Execute(vm.Items.Single(i => i.FileName == "wait.zip"));
+
+        Assert.Empty(fake.Moves);
+    }
+
+    [Fact]
+    public void Waiting_ShowsItsNumberInTheQueue()
+    {
+        var (_, vm) = Named(
+            ("wait1.zip", "https://h/0", DownloadStatus.Queued),
+            ("run.zip", "https://h/1", DownloadStatus.Downloading),
+            ("wait2.zip", "https://h/2", DownloadStatus.Queued));
+
+        Assert.Equal("В очереди №1", vm.Items.Single(i => i.FileName == "wait1.zip").StatusLabel);
+        Assert.Equal("В очереди №2", vm.Items.Single(i => i.FileName == "wait2.zip").StatusLabel);
+        Assert.Equal("", vm.Items.Single(i => i.FileName == "run.zip").StatusLabel);
+    }
+
+    [Fact]
+    public void AddLinks_ClearsSearch_SoTheNewDownloadIsVisible()
+    {
+        var (fake, vm) = Named(("a.zip", "https://h/a.zip", DownloadStatus.Completed));
+        vm.SearchText = "a.zip";
+
+        vm.AddLinks("https://h/b.zip");
+
+        Assert.Equal("", vm.SearchText);
+        Assert.Single(fake.Added);
+    }
+
+    [Fact]
+    public void LastDownloadRemoved_ClearsSearch()
+    {
+        var (fake, vm) = Named(("a.zip", "https://h/a.zip", DownloadStatus.Completed));
+        vm.SearchText = "a.zip";
+        fake.Snapshots.Clear();
+
+        vm.Refresh();
+
+        Assert.Equal("", vm.SearchText);
+        Assert.False(vm.HasDownloads);
+        Assert.Empty(vm.Items);
     }
 }

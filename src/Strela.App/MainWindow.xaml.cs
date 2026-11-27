@@ -71,6 +71,23 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.F || Keyboard.Modifiers != ModifierKeys.Control || !SearchBox.IsVisible) return;
+        SearchBox.Focus();
+        SearchBox.SelectAll();
+        e.Handled = true;
+    }
+
+    /// <summary>Esc очищает поиск; в пустом поиске — возвращает фокус списку.</summary>
+    private void SearchBox_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        if (SearchBox.Text.Length > 0) SearchBox.Clear();
+        else List.Focus();
+        e.Handled = true;
+    }
+
     private void SelectAll_Click(object sender, RoutedEventArgs e) => List.SelectAll();
 
     private void List_ContextMenuOpening(object sender, ContextMenuEventArgs e)

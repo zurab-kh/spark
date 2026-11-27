@@ -13,6 +13,11 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private readonly IDownloadManager _manager;
     private readonly Dictionary<Guid, DownloadItemViewModel> _byId = new();
+    private IReadOnlyList<DownloadSnapshot> _queue = [];   // все загрузки по QueueOrder на момент последнего Refresh
+    private string _searchText = "";
+    private string[] _searchWords = [];
+    private bool _hasDownloads;
+    private bool _nothingFound;
     private string _inputText = "";
     private string? _inputHint;
     private string _totalsText = "";
@@ -34,12 +39,31 @@ public sealed partial class MainViewModel : ObservableObject
         RemoveWithFileCommand = new AsyncRelayCommand<DownloadItemViewModel>(RemoveWithFileAsync);
         RemoveSelectedCommand = new AsyncRelayCommand<IEnumerable>(s => RemoveSelectedAsync(s, deleteFile: false));
         RemoveSelectedWithFileCommand = new AsyncRelayCommand<IEnumerable>(s => RemoveSelectedAsync(s, deleteFile: true));
-        MoveUpCommand = new RelayCommand<DownloadItemViewModel>(i => MoveBy(i, -1));
-        MoveDownCommand = new RelayCommand<DownloadItemViewModel>(i => MoveBy(i, +1));
+        StartEarlierCommand = new RelayCommand<DownloadItemViewModel>(i => MoveInQueue(i, -1));
+        StartLaterCommand = new RelayCommand<DownloadItemViewModel>(i => MoveInQueue(i, +1));
         UpdateUrlCommand = new AsyncRelayCommand<DownloadItemViewModel>(UpdateUrlAsync);
     }
 
+    /// <summary>Видимые загрузки: подходящие под поиск, новые сверху.</summary>
     public ObservableCollection<DownloadItemViewModel> Items { get; } = new();
+
+    /// <summary>Быстрый поиск: каждое слово должно найтись в имени файла или в ссылке (без учёта регистра).</summary>
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (!SetProperty(ref _searchText, value ?? "")) return;
+            _searchWords = _searchText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            Refresh();
+        }
+    }
+
+    /// <summary>В программе есть хоть одна загрузка (видимая или скрытая поиском).</summary>
+    public bool HasDownloads { get => _hasDownloads; private set => SetProperty(ref _hasDownloads, value); }
+
+    /// <summary>Загрузки есть, но поиск не нашёл ни одной.</summary>
+    public bool NothingFound { get => _nothingFound; private set => SetProperty(ref _nothingFound, value); }
 
     public string InputText
     {
@@ -79,8 +103,9 @@ public sealed partial class MainViewModel : ObservableObject
     public IRelayCommand<DownloadItemViewModel> OpenFolderCommand { get; }
     public IRelayCommand<DownloadItemViewModel> CopyUrlCommand { get; }
     public IRelayCommand<DownloadItemViewModel> RemoveCommand { get; }
-    public IRelayCommand<DownloadItemViewModel> MoveUpCommand { get; }
-    public IRelayCommand<DownloadItemViewModel> MoveDownCommand { get; }
+    /// <summary>Ожидающая загрузка начнётся раньше / позже соседней ожидающей. Место в списке не меняется.</summary>
+    public IRelayCommand<DownloadItemViewModel> StartEarlierCommand { get; }
+    public IRelayCommand<DownloadItemViewModel> StartLaterCommand { get; }
     public IAsyncRelayCommand<DownloadItemViewModel> UpdateUrlCommand { get; }
     public IAsyncRelayCommand<DownloadItemViewModel> RemoveWithFileCommand { get; }
     /// <summary>Параметр — выделенные строки списка (ListView.SelectedItems).</summary>
@@ -89,53 +114,85 @@ public sealed partial class MainViewModel : ObservableObject
 
     public bool Contains(string url) => _byId.Values.Any(i => string.Equals(i.Url, url, StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>Обновляет список на месте: существующие записи правятся, новые добавляются, лишние удаляются; порядок — по QueueOrder.</summary>
+    /// <summary>
+    /// Обновляет список на месте: существующие записи правятся, новые добавляются, лишние (удалённые или не подходящие
+    /// под поиск) убираются. Порядок — новые сверху (AddedAt, при равенстве — позже в очереди выше).
+    /// </summary>
     public void Refresh()
     {
         var snaps = _manager.GetSnapshots();
-
-        var known = 0;
-        foreach (var s in snaps)
-            if (_byId.ContainsKey(s.Id)) known++;
-        if (known != _byId.Count)   // в списке есть записи, которых больше нет в движке
+        if (snaps.Count == 0 && _searchText.Length > 0)
         {
-            var alive = new HashSet<Guid>(snaps.Select(s => s.Id));
-            for (var i = Items.Count - 1; i >= 0; i--)
-            {
-                if (alive.Contains(Items[i].Id)) continue;
-                _byId.Remove(Items[i].Id);
-                Items.RemoveAt(i);
-            }
+            // Поле поиска прячется вместе с последней загрузкой: оставшийся текст незаметно скрывал бы новые.
+            ShowAll();
+            return;
         }
+        _queue = snaps;
 
         double speed = 0;
         int active = 0, queued = 0;
-        for (var i = 0; i < snaps.Count; i++)
+        foreach (var s in snaps)
         {
-            var s = snaps[i];
-            if (!_byId.TryGetValue(s.Id, out var vm))
-            {
-                vm = new DownloadItemViewModel(s.Id);
-                _byId[s.Id] = vm;
-                vm.Update(s);
-                Items.Insert(Math.Min(i, Items.Count), vm);
-            }
-            else
-            {
-                vm.Update(s);
-                if (i >= Items.Count || !ReferenceEquals(Items[i], vm))
-                    Items.Move(Items.IndexOf(vm), Math.Min(i, Items.Count - 1));
-            }
-
             if (s.Status == DownloadStatus.Downloading) { active++; speed += s.BytesPerSecond; }
             else if (s.Status == DownloadStatus.Queued) queued++;
+
+            if (!_byId.TryGetValue(s.Id, out var vm))
+                _byId[s.Id] = vm = new DownloadItemViewModel(s.Id);
+            vm.Update(s, queuePosition: queued);   // snaps идут по QueueOrder: queued — номер этой среди ожидающих
         }
+        if (_byId.Count != snaps.Count)   // в словаре есть записи, которых больше нет в движке
+        {
+            var alive = new HashSet<Guid>(snaps.Select(s => s.Id));
+            foreach (var id in _byId.Keys.Where(id => !alive.Contains(id)).ToList())
+                _byId.Remove(id);
+        }
+
+        var visible = snaps.Where(Matches)
+            .OrderByDescending(s => s.AddedAt).ThenByDescending(s => s.QueueOrder)
+            .Select(s => _byId[s.Id]).ToList();
+        SyncItems(visible);
+        HasDownloads = snaps.Count > 0;
+        NothingFound = HasDownloads && visible.Count == 0;
 
         TotalSpeed = speed;
         SpeedTotalText = speed > 0 ? Format.Speed(speed) : "0 Б/с";
         ActiveText = $"Активно {active}";
         QueuedText = $"В очереди {queued}";
         TotalsText = $"Всего: {SpeedTotalText} · {ActiveText} · {QueuedText}";
+    }
+
+    /// <summary>Сбрасывает поиск (с Refresh); без поиска — просто Refresh. Новая загрузка не должна прятаться за фильтром.</summary>
+    private void ShowAll()
+    {
+        if (_searchText.Length > 0) SearchText = "";
+        else Refresh();
+    }
+
+    private bool Matches(DownloadSnapshot s)
+    {
+        foreach (var word in _searchWords)
+        {
+            if (!s.FileName.Contains(word, StringComparison.OrdinalIgnoreCase)
+                && !s.Url.Contains(word, StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>Приводит Items к <paramref name="visible"/> минимумом изменений: выделение и прокрутка списка сохраняются.</summary>
+    private void SyncItems(List<DownloadItemViewModel> visible)
+    {
+        // После шага i начало Items совпадает с visible[0..i]; всё лишнее оказывается в хвосте.
+        for (var i = 0; i < visible.Count; i++)
+        {
+            var vm = visible[i];
+            if (i < Items.Count && ReferenceEquals(Items[i], vm)) continue;
+            var at = Items.IndexOf(vm);
+            if (at < 0) Items.Insert(i, vm);
+            else Items.Move(at, i);
+        }
+        while (Items.Count > visible.Count)   // удалённые и скрытые поиском
+            Items.RemoveAt(Items.Count - 1);
     }
 
     /// <summary>Ссылку уже скачали, файл на месте — новая загрузка не создана.</summary>
@@ -174,7 +231,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (added > 0)
         {
             InputHint = null;
-            Refresh();
+            ShowAll();
         }
         else
         {
@@ -195,7 +252,7 @@ public sealed partial class MainViewModel : ObservableObject
         if (added > 0)
         {
             InputHint = null;
-            Refresh();
+            ShowAll();
         }
         return added;
     }
@@ -218,14 +275,24 @@ public sealed partial class MainViewModel : ObservableObject
         catch { InputHint = "Не удалось скопировать: буфер обмена занят"; }
     }
 
-    private void MoveBy(DownloadItemViewModel? item, int delta)
+    /// <summary>
+    /// Ставит ожидающую загрузку в очереди на место ближайшей ожидающей перед ней (<paramref name="delta"/> = −1) или
+    /// после неё (+1). Идущие, на паузе и готовые загрузки не трогаются; список остаётся «новые сверху».
+    /// </summary>
+    private void MoveInQueue(DownloadItemViewModel? item, int delta)
     {
         if (item is null) return;
-        var index = Items.IndexOf(item);
-        var target = index + delta;
-        if (index < 0 || target < 0 || target >= Items.Count) return;
-        _manager.Move(item.Id, target);
-        Refresh();
+        var at = -1;
+        for (var i = 0; i < _queue.Count; i++)
+            if (_queue[i].Id == item.Id) { at = i; break; }
+        if (at < 0 || _queue[at].Status != DownloadStatus.Queued) return;
+        for (var i = at + delta; i >= 0 && i < _queue.Count; i += delta)
+        {
+            if (_queue[i].Status != DownloadStatus.Queued) continue;
+            _manager.Move(item.Id, i);
+            Refresh();
+            return;
+        }
     }
 
     private async Task RemoveAsync(DownloadItemViewModel? item, bool deleteFile)

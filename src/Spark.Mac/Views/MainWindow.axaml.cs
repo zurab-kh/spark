@@ -34,6 +34,8 @@ public partial class MainWindow : Window
 
         InputBox.AddHandler(KeyDownEvent, InputBox_KeyDown, RoutingStrategies.Tunnel);
         List.AddHandler(KeyDownEvent, List_KeyDown, RoutingStrategies.Tunnel);
+        SearchBox.AddHandler(KeyDownEvent, SearchBox_KeyDown, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, Window_KeyDown, RoutingStrategies.Tunnel);
         List.DoubleTapped += List_DoubleTapped;
         ItemMenu.Opening += ItemMenu_Opening;
         AddHandler(DragDrop.DragOverEvent, Window_DragOver);
@@ -52,6 +54,23 @@ public partial class MainWindow : Window
         if (e.Key is not (Key.Enter or Key.Return)) return;
         if ((e.KeyModifiers & KeyModifiers.Shift) != 0) return;   // Shift+Enter — новая строка
         _vm.AddFromInputCommand.Execute(null);
+        e.Handled = true;
+    }
+
+    private void Window_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.F || e.KeyModifiers != KeyModifiers.Meta || !SearchBox.IsVisible) return;
+        SearchBox.Focus();
+        SearchBox.SelectAll();
+        e.Handled = true;
+    }
+
+    /// <summary>Esc очищает поиск; в пустом поиске — возвращает фокус списку.</summary>
+    private void SearchBox_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        if (!string.IsNullOrEmpty(SearchBox.Text)) SearchBox.Text = "";
+        else List.Focus();
         e.Handled = true;
     }
 
@@ -96,6 +115,7 @@ public partial class MainWindow : Window
         MenuPause.IsEnabled = item.CanPause;
         MenuResume.IsEnabled = item.CanResume;
         MenuRetry.IsEnabled = item.CanRetry;
+        QueueSeparator.IsVisible = MenuEarlier.IsVisible = MenuLater.IsVisible = item.IsQueued;
     }
 
     private void MenuOpen_Click(object? sender, RoutedEventArgs e) => _vm.OpenFileCommand.Execute(Current);
@@ -105,8 +125,8 @@ public partial class MainWindow : Window
     private void MenuRetry_Click(object? sender, RoutedEventArgs e) => _vm.RetryCommand.Execute(Current);
     private void MenuUpdateUrl_Click(object? sender, RoutedEventArgs e) => _vm.UpdateUrlCommand.Execute(Current);
     private void MenuCopyUrl_Click(object? sender, RoutedEventArgs e) => _vm.CopyUrlCommand.Execute(Current);
-    private void MenuUp_Click(object? sender, RoutedEventArgs e) => _vm.MoveUpCommand.Execute(Current);
-    private void MenuDown_Click(object? sender, RoutedEventArgs e) => _vm.MoveDownCommand.Execute(Current);
+    private void MenuEarlier_Click(object? sender, RoutedEventArgs e) => _vm.StartEarlierCommand.Execute(Current);
+    private void MenuLater_Click(object? sender, RoutedEventArgs e) => _vm.StartLaterCommand.Execute(Current);
     private void MenuRemove_Click(object? sender, RoutedEventArgs e) => _vm.RemoveSelectedCommand.Execute(Selected());
     private void MenuRemoveWithFile_Click(object? sender, RoutedEventArgs e) => _vm.RemoveSelectedWithFileCommand.Execute(Selected());
     private void MenuSelectAll_Click(object? sender, RoutedEventArgs e) => List.SelectAll();
