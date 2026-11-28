@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using Strela.Engine;
 using Velopack;
@@ -6,15 +8,18 @@ using Velopack.Sources;
 namespace Strela.App.Services;
 
 /// <summary>
-/// Обновления по воздуху (Velopack). Новые версии лежат в выпусках открытого репозитория <see cref="ReleasesUrl"/>,
-/// их выкладывает GitHub Actions по тегу v*. Проверка через минуту после запуска и затем раз в 6 часов; новая
+/// Обновления по воздуху (Velopack). Новые версии лежат в выпусках открытого репозитория zurab-kh/spark, их
+/// выкладывает GitHub Actions по тегу v*. Файлы берутся по прямым ссылкам последнего выпуска (<see cref="ReleasesUrl"/>),
+/// а не через API GitHub: тот пускает без входа 60 запросов в час на адрес, и общий адрес провайдера выбирает их чужими
+/// запросами (403 rate limit exceeded). В ленте последнего выпуска — его полный пакет и дельта от предыдущей версии;
+/// кто отстал сильнее, получает полный пакет. Проверка через минуту после запуска и затем раз в 6 часов; новая
 /// версия скачивается тихо, Spark предлагает перезапуститься, а если пользователь не стал — ставит её при выходе.
 /// Работает только в установленном Spark (Setup или портативная сборка из выпуска), не в сборке из исходников.
 /// </summary>
 public sealed class AppUpdater : IDisposable
 {
-    public const string ReleasesUrl = "https://github.com/zurab-kh/spark";
-    /// <summary>Для проверки: папка с выпусками vpk pack или другой адрес на GitHub вместо <see cref="ReleasesUrl"/>.</summary>
+    public const string ReleasesUrl = "https://github.com/zurab-kh/spark/releases/latest/download/";
+    /// <summary>Для проверки: папка с выпусками vpk pack или другой https-адрес с releases.*.json вместо <see cref="ReleasesUrl"/>.</summary>
     public const string SourceVariable = "SPARK_UPDATE_SOURCE";
 
     private static readonly TimeSpan FirstCheck = TimeSpan.FromMinutes(1);
@@ -34,7 +39,7 @@ public sealed class AppUpdater : IDisposable
         {
             var source = Environment.GetEnvironmentVariable(SourceVariable) is { Length: > 0 } custom ? custom : ReleasesUrl;
             IUpdateSource updates = source.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
-                ? new GithubSource(source, null, false)
+                ? new SimpleWebSource(source)
                 : new SimpleFileSource(new DirectoryInfo(source));
             var manager = new UpdateManager(updates);
             if (manager.IsInstalled)
@@ -92,13 +97,31 @@ public sealed class AppUpdater : IDisposable
         }
         catch (Exception ex)
         {
-            _log.Warn($"updates: check failed: {ex.Message}");
-            return $"Не удалось проверить обновления: {ex.Message}";
+            _log.Warn($"updates: check failed: {ex}");
+            return Describe(ex);
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    /// <summary>Причина неудачной проверки — словами для пользователя; подробности в журнале.</summary>
+    internal static string Describe(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)   // Velopack может завернуть ошибку сети в свою
+        {
+            switch (e)
+            {
+                case HttpRequestException { StatusCode: HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests }:
+                    return "GitHub временно ограничил проверки. Spark попробует снова позже";
+                case HttpRequestException { StatusCode: HttpStatusCode.NotFound }:
+                    return "Новая версия сейчас выкладывается. Попробуйте через несколько минут";
+                case HttpRequestException { StatusCode: null } or TaskCanceledException or TimeoutException:
+                    return "Нет связи с GitHub. Проверьте интернет";
+            }
+        }
+        return "Не удалось проверить обновления. Подробности в журнале Spark";
     }
 
     private string ReadyText() => $"Версия {ReadyVersion} загружена: перезапустите Spark";
